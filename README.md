@@ -78,7 +78,7 @@ $f="$env:TEMP\jtdt-install.ps1"; try { Invoke-WebRequest 'https://cdn.jsdelivr.n
 ### 格式轉換 [需 OxOffice/LibreOffice]
 - **文書轉 PDF / 圖片** — Word / Excel / PowerPoint / ODF
 - **圖片轉 PDF**
-- **PDF 轉文書檔（Beta）** — PDF 反轉成 Word (.docx) / OpenDocument (.odt)，自家 jtdt-reform 引擎還原版面
+- **PDF 轉文書檔（Beta）** — PDF 反轉成 Word (.docx) / OpenDocument (.odt)，雙引擎可選：pdf2docx 與自家 jtdt-reform，還原版面 / 表格 / 圖片
 
 ### 資安處理
 - **文件去識別化 / 文字去識別化** — 身分證 / 電話 / 銀行帳號 / 統編 / AD DN 等 14+ 種敏感資料
