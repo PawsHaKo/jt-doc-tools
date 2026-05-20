@@ -4,7 +4,7 @@
 
 > **預設關閉。** 安裝後不接任何 LLM 服務，所有核心工具（掃描、轉檔、編輯、簽章、加密、合併、分拆、去識別化…）照樣 100% 可用。
 >
-> 啟用方式：`/admin/llm-settings` 頁面填 OpenAI-compatible API base URL（如本機 Ollama / vLLM / LM Studio / DGX Spark）+ 選預設模型，即可在 10 個工具看到「啟用 LLM」選項。
+> 啟用方式：`/admin/llm-settings` 頁面填 OpenAI-compatible API base URL（如本機 Ollama / vLLM / LM Studio / DGX Spark）+ 選預設模型，即可在 11 個工具看到「啟用 LLM」選項。
 
 ## 為什麼要支援 LLM
 
@@ -15,7 +15,7 @@
 | 看 100 頁的合約找改了什麼 | 行 diff 一條條看 | 直接告訴你「第 3.2 條保固期改 12→24 個月，第 5.1 條付款改月結 30→60」 |
 | 註解 30 條意見要分類 | 手動按嚴重度排序 | 自動分「重大 / 一般 / 提問」三類 |
 
-## 支援的工具（共 10 個）
+## 支援的工具（共 11 個）
 
 > 模式分兩種：
 > - **text** — 純文字 chat，任何 OpenAI-compatible 文字模型都能跑（Gemma / Llama / Mistral 等）
@@ -121,6 +121,15 @@
 **已實作**:
 - 預設關閉；L3 / L4 各自獨立開關
 - 與 L1 結構檢查 / L2 OCR-based 檢查並列，產出 PASS / WARN / FAIL 三級分類報告
+
+### 11. 電子發票處理 — LLM 會計科目判讀 (`einvoice-scan`) — text
+
+**LLM 做什麼**：
+- 內建規則（關鍵字 + 自訂規則）先分類會計科目；規則對不到的品項，交給 LLM 依品項描述判讀應歸哪個會計科目
+- 批次發票一次判讀，回填到匯出表
+
+**已實作**:
+- 預設關閉；規則優先，LLM 僅補規則對不到的品項（降低 token 用量與幻覺風險）
 
 ## 部署選項
 

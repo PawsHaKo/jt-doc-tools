@@ -95,7 +95,7 @@ $f="$env:TEMP\jtdt-install.ps1"; try { Invoke-WebRequest 'https://cdn.jsdelivr.n
 
 ## LLM AI 加值（選用，預設關閉）
 
-接 OpenAI-compatible 後端（本機 Ollama / vLLM / LM Studio / DGX Spark）後，**10 個工具**自動多出聰明選項：
+接 OpenAI-compatible 後端（本機 Ollama / vLLM / LM Studio / DGX Spark）後，**11 個工具**自動多出聰明選項：
 
 | 工具 | LLM 做什麼 | 模式 |
 |---|---|---|
@@ -109,6 +109,7 @@ $f="$env:TEMP\jtdt-install.ps1"; try { Invoke-WebRequest 'https://cdn.jsdelivr.n
 | 字數統計 | 額外生成 3-5 句摘要 + TOP 10 關鍵字 | text |
 | 註解整理 | 多筆審閱意見自動分「重大 / 一般 / 提問」 | text |
 | 文件差異比對 | 行 diff 之外多給「主要修改了哪幾條條款」自然語言摘要 | text |
+| 電子發票處理 | 規則對不到的品項，用 LLM 判讀會計科目分類 | text |
 
 **核心工具完全不依賴 LLM**；沒設定就跟以前一樣全部能用。詳見 **[LLM.md](LLM.md)**。
 
@@ -122,7 +123,7 @@ $f="$env:TEMP\jtdt-install.ps1"; try { Invoke-WebRequest 'https://cdn.jsdelivr.n
 | **[OPS.md](OPS.md)** | 日常運維：`jtdt` 指令、升級、反向代理(nginx/Caddy)、監聽位置、備份還原、排程清理 |
 | **[AUTH.md](AUTH.md)** | 認證 / RBAC / 內建帳號(jtdt-admin / jtdt-auditor)/ 2FA / 帳號鎖定 / 緊急復原 |
 | **[API.md](API.md)**（[線上網頁版](https://jasoncheng7115.github.io/jt-doc-tools/api.html)）| REST API:Bearer token、endpoint 一覽、上傳格式、回傳格式、錯誤碼、curl / Python 範例、Job 流程 |
-| **[LLM.md](LLM.md)** | LLM AI 加值功能（預設關閉）：10 個工具如何用 LLM、效果範例、部署選項（Ollama / vLLM / DGX Spark） |
+| **[LLM.md](LLM.md)** | LLM AI 加值功能（預設關閉）：11 個工具如何用 LLM、效果範例、部署選項（Ollama / vLLM / DGX Spark） |
 | **[SECURITY.md](SECURITY.md)** | 資安政策、OWASP Top 10 (2025) 對照、漏洞回報管道、GitHub native scan 整合 |
 | **[CHANGELOG.md](CHANGELOG.md)** | 完整更新記錄 |
 | **[TEST_PLAN.md](TEST_PLAN.md)** | 測試清單、發版前檢查 |
