@@ -233,6 +233,45 @@ def add_llm_search_layer_offpage(page: "fitz.Page", llm_text: str) -> int:
         return 0
 
 
+def add_llm_text_overlay_on_page(page: "fitz.Page", llm_text: str) -> int:
+    """LLM 直接辨識用 — 把 LLM 回的文字以**透明文字層**覆蓋到頁面上(不是頁外)，
+    這樣使用者用滑鼠拖選頁面任何區域,都能選到 OCR 出來的文字並複製。
+
+    跟 `add_llm_search_layer_offpage` 的差別：
+    - off-page 把文字放在 page rect 外 → 只能 Cmd+F 搜尋,拖選不到
+    - on-page 把文字鋪在頁面內 → 拖選有 hit
+    沒有 word 級 bbox 所以拖選不會精準到字,但整頁的內容可以一次拖選複製。
+
+    回插入的字數(實際字元數，不是「1=成功」)。
+    """
+    if not llm_text or not llm_text.strip():
+        return 0
+    text = llm_text.strip()
+    try:
+        # 留 20pt 邊距,避免文字層蓋到頁緣截斷
+        rect = fitz.Rect(20, 20,
+                         page.rect.width - 20, page.rect.height - 20)
+        # 由大到小試字級,確保所有字都塞得進可見頁面區
+        for size in (10, 8, 6, 4, 3, 2, 1):
+            ret = page.insert_textbox(
+                rect, text,
+                fontname="china-t",
+                fontsize=size,
+                color=(0, 0, 0),
+                render_mode=3,  # 透明（不顯示但可選取 / 可搜尋）
+                align=0,
+            )
+            if ret >= 0:
+                return len(text)
+        # 最小字級仍塞不下 → 強制塞入(會被裁,但至少有部分可選)
+        page.insert_textbox(rect, text, fontname="china-t",
+                             fontsize=1, color=(0, 0, 0), render_mode=3, align=0)
+        return len(text)
+    except Exception as e:
+        log.warning("add_llm_text_overlay_on_page failed: %s", e)
+        return 0
+
+
 def page_has_text_layer(page: "fitz.Page") -> bool:
     """檢查頁面是否已有實質文字層（避免重複 OCR）。"""
     try:
@@ -503,15 +542,15 @@ def ocr_pdf_to_searchable(
                     text = llm_direct_ocr(small_png) or ""
                     text = text.strip()
                     if text:
-                        words_added = add_llm_search_layer_offpage(page, text)
-                        if words_added > 0:
+                        chars_added = add_llm_text_overlay_on_page(page, text)
+                        if chars_added > 0:
                             pages_ocrd += 1
-                            words_inserted += words_added
+                            words_inserted += chars_added
                             llm_direct_used = True
                             dstage["used"] = True
                             dstage["text"] = text
-                            dstage["note"] = f"成功（{words_added} 字寫入頁外搜尋層）"
-                            _emit(cp, f"LLM 直接辨識完成（{words_added} 字）")
+                            dstage["note"] = f"成功（{chars_added} 字寫入透明文字層）"
+                            _emit(cp, f"LLM 直接辨識完成（{chars_added} 字）")
                             did_llm_direct = True
                         else:
                             dstage["note"] = "LLM 回覆有文字但寫入搜尋層失敗"
