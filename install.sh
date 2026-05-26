@@ -538,6 +538,28 @@ install_tesseract() {
 
 # --------------------------------------------------------------------- zbar
 
+# CJK 字型 — PDF 文字插入 / 浮水印 / 用印 / 報告 需要正確中文 glyph 渲染。
+# OxOffice .deb 套件不會帶 fonts-noto-cjk 進來（裝 LibreOffice 走 apt 路徑時才會
+# 順帶帶到），所以這裡獨立一步補裝，確保兩種 Office 安裝路徑下都有字型。
+install_cjk_fonts() {
+    [ "$PLATFORM" != "linux" ] && return 0
+    if dpkg -l fonts-noto-cjk 2>/dev/null | grep -q "^ii"; then
+        ok "CJK 字型已存在（fonts-noto-cjk）"
+        return 0
+    fi
+    if ! command -v apt-get >/dev/null 2>&1; then
+        warn "非 apt 系統，請手動安裝 CJK 字型（PDF 中文 / 用印 / 浮水印需要）"
+        return 0
+    fi
+    log "安裝 CJK 字型（fonts-noto-cjk）..."
+    if DEBIAN_FRONTEND=noninteractive apt-get install -y fonts-noto-cjk 2>/dev/null; then
+        ok "CJK 字型安裝完成"
+    else
+        warn "fonts-noto-cjk 安裝失敗。PDF 中文渲染會缺字方框，可手動補裝："
+        warn "  sudo apt install fonts-noto-cjk"
+    fi
+}
+
 # zbar shared lib — pyzbar (einvoice-scan QR code 解析) 的 native 依賴。
 # Windows pyzbar wheel 內建 DLL 不需安裝；Linux/macOS 必須額外裝。
 # 缺則 einvoice-scan QR 掃描功能會在啟動時 503，其餘工具不受影響。
@@ -1012,6 +1034,7 @@ main() {
 
     install_oxoffice_x11_runtime_libs_linux
     ensure_office
+    install_cjk_fonts
     install_tesseract
     install_zbar
     fetch_code
