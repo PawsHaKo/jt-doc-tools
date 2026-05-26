@@ -390,9 +390,12 @@ async function removeCrop(id) {
 document.getElementById('whitenToggle').addEventListener('change', render);
 
 // 全部清除：清掉預覽內容 + 已上傳檔案 + 重置狀態
-document.getElementById('btn-clear-all').addEventListener('click', () => {
+document.getElementById('btn-clear-all').addEventListener('click', async () => {
   if (!sources.length && !crops.length) return;
-  if (!confirm('確定要清除所有上傳檔案與預覽內容嗎？')) return;
+  const ok = await window.showConfirm('確定要清除所有上傳檔案與預覽內容嗎？', {
+    title: '全部清除', okText: '清除', cancelText: '取消', kind: 'warn',
+  });
+  if (!ok) return;
   // 通知後端刪除暫存 crop（best-effort，失敗也無妨，過期會自動清）
   crops.forEach(c => fetch('/tools/scan-merge/delete/' + c.crop_id, {method:'POST'}).catch(() => {}));
   crops = [];
