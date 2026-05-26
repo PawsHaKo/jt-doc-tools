@@ -721,6 +721,21 @@ setup_python() {
     ok "Python 環境就緒：$INSTALL_DIR/.venv"
 }
 
+# --------------------------------------------------------------------- 清理快取
+#
+# 把安裝過程留下的暫存釋放掉。重點是 LXC / 容器資源緊的環境（apt cache 容易
+# 留下 ~1GB 的 .deb、uv 快取也容易留 ~1GB 的 wheel）。完成後常駐約 ~3GB。
+cleanup_caches() {
+    log "清理安裝暫存快取 ..."
+    if command -v apt-get >/dev/null 2>&1; then
+        apt-get clean 2>/dev/null || true
+    fi
+    if [ -x "$INSTALL_DIR/bin/uv" ]; then
+        "$INSTALL_DIR/bin/uv" cache clean 2>/dev/null || true
+    fi
+    ok "暫存快取已清理"
+}
+
 # --------------------------------------------------------------------- 資料
 
 prepare_data() {
@@ -1006,6 +1021,7 @@ main() {
     # 不需要資料目錄 / 服務 / 健康檢查。先裝好可確保即使後續步驟失敗
     # （磁碟 quota、無 systemd 等），使用者仍能用 `jtdt status` / `jtdt logs` debug。
     install_cli
+    cleanup_caches
     prepare_data
     install_service
     health_check
