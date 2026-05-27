@@ -83,7 +83,9 @@
           <span class="llm-gate-aug-tag llm-gate-aug-tag-off">需 LLM 服務</span>
           {%- endif -%}
           {%- if feature_desc -%}
-          <span class="llm-gate-aug-desc">{{ feature_desc }}</span>
+          {# feature_desc is hard-coded in template callers (no user input),
+             so | safe is fine — lets tools use <b>, <code>, <a> inline. #}
+          <span class="llm-gate-aug-desc">{{ feature_desc | safe }}</span>
           {%- endif -%}
         </span>
       </label>

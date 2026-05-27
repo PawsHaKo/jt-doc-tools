@@ -167,31 +167,47 @@ GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)
 GPU_DRIVER=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -1)
 log "[OK] GPU: $GPU_NAME (driver $GPU_DRIVER)"
 
-# 1.6 python
-if ! command -v python3 >/dev/null 2>&1; then
-    fail "python3 not found"
+# 1.6 python -- accept PYTHON= env override (e.g. PYTHON=/usr/bin/python3.12)
+PYTHON="${{PYTHON:-python3}}"
+if ! command -v "$PYTHON" >/dev/null 2>&1; then
+    fail "python interpreter not found: $PYTHON (override with PYTHON=/path/to/python3.X)"
 fi
-PY_VER=$(python3 -c 'import sys; print(f"{{sys.version_info.major}}.{{sys.version_info.minor}}")')
-PY_MAJ=$(python3 -c 'import sys; print(sys.version_info.major)')
-PY_MIN=$(python3 -c 'import sys; print(sys.version_info.minor)')
+PY_VER=$("$PYTHON" -c 'import sys; print(f"{{sys.version_info.major}}.{{sys.version_info.minor}}")')
+PY_MAJ=$("$PYTHON" -c 'import sys; print(sys.version_info.major)')
+PY_MIN=$("$PYTHON" -c 'import sys; print(sys.version_info.minor)')
 if [[ "$PY_MAJ" != "3" ]] || [[ "$PY_MIN" -lt 10 ]]; then
-    fail "Python $PY_VER too old (need 3.10+)"
+    fail "Python $PY_VER too old (need 3.10+; override with PYTHON=/usr/bin/python3.12)"
 fi
-log "[OK] python: $PY_VER ($(which python3))"
+log "[OK] python: $PY_VER ($($PYTHON -c 'import sys; print(sys.executable)'))"
 
-# 1.7 venv module
-if ! python3 -c "import venv" 2>/dev/null; then
-    fail "python3-venv missing. Install with: apt install python3-venv"
+# 1.7 venv module -- must test by actually creating a venv (Ubuntu splits
+# `ensurepip` data into a Python-version-specific package; `import venv`
+# can succeed while `python -m venv` fails for missing ensurepip).
+if ! "$PYTHON" -c "import venv" 2>/dev/null; then
+    fail "python3-venv missing. Install with: apt install python3-venv python${{PY_VER}}-venv"
 fi
-log "[OK] python3-venv available"
+_venv_probe=$(mktemp -d /tmp/jt-ocr-venv-probe.XXXXXX)
+if ! "$PYTHON" -m venv "$_venv_probe/.venv" >/dev/null 2>&1; then
+    rm -rf "$_venv_probe"
+    fail "python -m venv FAILS even though 'import venv' works. Install: apt install python${{PY_VER}}-venv (Python ${{PY_VER}} specific ensurepip data)"
+fi
+rm -rf "$_venv_probe"
+log "[OK] python3-venv working ($("$PYTHON" -c 'import venv; print(venv.__file__)' | head -1))"
+
+# 1.7b Warn on Python > 3.13 (PyTorch wheels often lag for newest Python)
+if [[ "$PY_MIN" -gt 13 ]]; then
+    log "[!!] Python $PY_VER is newer than PyTorch's typical wheel support (3.9-3.13)."
+    log "     If install fails at PyTorch step, install Python 3.12 alongside and rerun:"
+    log "       apt install python3.12-venv && PYTHON=/usr/bin/python3.12 bash install.sh"
+fi
 
 # 1.8 detect pre-installed torch (reuse if found, saves ~3GB)
 PRE_TORCH=""
 PRE_TORCH_VER=""
-if python3 -c 'import torch' 2>/dev/null; then
-    PRE_TORCH="$(which python3)"
-    PRE_TORCH_VER=$(python3 -c 'import torch; print(torch.__version__)')
-    PRE_TORCH_CUDA=$(python3 -c 'import torch; print(torch.cuda.is_available())')
+if "$PYTHON" -c 'import torch' 2>/dev/null; then
+    PRE_TORCH="$("$PYTHON" -c 'import sys; print(sys.executable)')"
+    PRE_TORCH_VER=$("$PYTHON" -c 'import torch; print(torch.__version__)')
+    PRE_TORCH_CUDA=$("$PYTHON" -c 'import torch; print(torch.cuda.is_available())')
     log "[OK] system PyTorch detected: $PRE_TORCH_VER (cuda=$PRE_TORCH_CUDA) - will reuse"
 else
     log "[..] system PyTorch not found - will install (~3GB)"
@@ -279,9 +295,11 @@ elif [[ "$ARCH" = "aarch64" ]]; then
     TORCH_INDEX="https://download.pytorch.org/whl/cu128"
     log "[..] aarch64 -> using PyTorch cu128 wheels (Blackwell sm_120 / DGX Spark)"
 else
+    # cu128 has broader Python version support (incl. 3.13+) + newer GPU coverage
+    # (Blackwell RTX PRO 6000 etc.). cu124 wheels lag and miss Python 3.14.
     TORCH_INSTALL_MODE="install"
-    TORCH_INDEX="https://download.pytorch.org/whl/cu124"
-    log "[..] x86_64 -> using PyTorch cu124 wheels"
+    TORCH_INDEX="https://download.pytorch.org/whl/cu128"
+    log "[..] x86_64 -> using PyTorch cu128 wheels (newer Python + Blackwell coverage)"
 fi
 
 if [[ "$DRY_RUN" = "1" ]]; then
@@ -329,18 +347,29 @@ trap cleanup_stage EXIT ERR
 # 2.1 venv
 log "[..] creating Python venv..."
 if [[ "$TORCH_INSTALL_MODE" = "reuse-system" ]]; then
-    python3 -m venv --system-site-packages "$STAGE/.venv"
+    "$PYTHON" -m venv --system-site-packages "$STAGE/.venv"
     log "     venv inherits system-site-packages (reusing pre-installed torch=$PRE_TORCH_VER)"
 else
-    python3 -m venv "$STAGE/.venv"
+    "$PYTHON" -m venv "$STAGE/.venv"
 fi
 "$STAGE/.venv/bin/pip" install -q -U pip
 
 # 2.2 PyTorch
 if [[ "$TORCH_INSTALL_MODE" = "install" ]]; then
     log "[..] installing PyTorch (2-3GB, 5-15 min depending on network)..."
-    "$STAGE/.venv/bin/pip" install -q torch torchvision --index-url "$TORCH_INDEX" \\
-        || fail "PyTorch install failed (index=$TORCH_INDEX)"
+    if ! "$STAGE/.venv/bin/pip" install -q torch torchvision --index-url "$TORCH_INDEX"; then
+        log "[FAIL] PyTorch install failed (index=$TORCH_INDEX, Python=$PY_VER)"
+        if [[ "$PY_MIN" -gt 13 ]]; then
+            log "       PyTorch likely doesn't ship wheels for Python $PY_VER yet."
+            log "       Workaround: install Python 3.12 + rerun:"
+            log "         apt install python3.12 python3.12-venv"
+            log "         PYTHON=/usr/bin/python3.12 bash $0"
+        else
+            log "       Try the default PyPI index (CPU wheels, no GPU acceleration):"
+            log "         $STAGE/.venv/bin/pip install torch torchvision"
+        fi
+        fail "PyTorch install failed"
+    fi
     log "[OK] PyTorch installed"
 fi
 

@@ -4,6 +4,39 @@
 
 ---
 
+## [1.11.31] - 2026-05-27
+
+### 新增 — Markdown 轉文書工具
+
+新工具 **「Markdown 轉文書」**（格式轉換分類），把 Markdown 文字 / 檔案轉成 PDF / DOCX / ODT，含**所有頁面預覽**。
+
+**功能**：
+- **直接貼上或拖入 `.md / .markdown / .txt`**（單一輸入區，drop-zone 與 textarea 共存）
+- **6 種配色主題可選**：經典（Classic）／GitHub／學術（Academic）／書本（Book）／報告（Report）／等寬（Mono）
+- **Markdown 解析**：用 `markdown-it-py`（CommonMark + 表格 + 刪除線 + footnote），渲染後 soffice headless 出 PDF / DOCX / ODT
+- **所有頁面預覽**：上限 50 頁，96 dpi 縮圖，網格排列
+- **下載三種格式**任一鍵；上限 5 MB Markdown 原始檔
+- **REST API**：`POST /tools/markdown-to-doc/api/markdown-to-doc`，回 JSON 含 3 種下載 URL + 預覽 URL
+
+**新增依賴**：
+- `markdown-it-py>=3.0,<4`（MIT、純 Python、~150 KB）
+- 已同步 `pyproject.toml` / `requirements.txt` / `uv.lock` / `cli.py` 與 `install.sh` smoke test / `setup-python.cmd`
+
+### 改善 — install.sh / jt-ocr-server install Python 3.14 + Blackwell 支援
+
+- **預檢真的建立 venv**（不只 `dpkg -s python3-venv`）：Ubuntu 26.04 把 ensurepip 拆成 per-version 套件 `python3.14-venv`，舊版偵測會誤判通過；改 `mktemp -d` 試做 venv 才下結論
+- **PyTorch cu124 → cu128**：Python 3.13+ wheels + RTX PRO 6000 Blackwell（sm_120）原生支援；x86_64 / aarch64 統一 cu128
+- **`PYTHON=` 環境變數**：客戶可 `sudo PYTHON=/usr/bin/python3.12 bash install.sh` 強制使用較穩定的 Python 版本
+- **Python > 3.13 警告**：偵測到 3.14+ 時提示「PyTorch wheel 可能尚未提供」
+
+### 文件
+
+- README + docs/index.html 工具數 37 → **38**
+- API.md 補 `/tools/markdown-to-doc/*` 端點
+- 工具自動進入 `default-user` 預設權限角色
+
+---
+
 ## [1.11.30] - 2026-05-27
 
 ### 新增 — PDF 轉 Markdown 工具

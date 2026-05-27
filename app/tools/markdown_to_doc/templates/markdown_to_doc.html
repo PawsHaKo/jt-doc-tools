@@ -1,0 +1,334 @@
+{% extends "base.html" %}
+{% from "components/icons.html" import icon %}
+{% block title %}Markdown 轉文書 · {{ app_name }}{% endblock %}
+{% block head %}
+<style>
+.md2-textarea {
+  width: 100%; min-height: 280px; max-height: 60vh;
+  padding: 12px 14px; border: 1px solid #d1d5db; border-radius: 6px;
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 13px; line-height: 1.6; resize: vertical;
+  background: #fff; color: #1e293b; box-sizing: border-box;
+}
+.md2-textarea:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.15); }
+.md2-drop {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px; margin: 6px 0;
+  border: 1.5px dashed #cbd5e1; border-radius: 6px;
+  background: #f8fafc; cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  height: 36px; box-sizing: border-box;
+  font-size: 12.5px; color: #475569;
+}
+.md2-drop:hover { border-color: #6366f1; background: #eef2ff; }
+.md2-drop.is-dragover { border-color: #16a34a; background: #dcfce7; border-style: solid; }
+.md2-drop.has-file { border-color: #16a34a; background: #f0fdf4; border-style: solid; }
+.md2-drop b { color: #1e40af; }
+.md2-drop .hint { color: #94a3b8; font-size: 11px; margin-left: 6px; }
+.md2-themes {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px; margin-top: 8px;
+}
+.md2-theme {
+  display: block; cursor: pointer;
+  padding: 12px 14px; border: 2px solid #e2e8f0; border-radius: 8px;
+  background: #fff; transition: border-color .15s, background .15s;
+  position: relative;
+}
+.md2-theme:hover { border-color: #94a3b8; }
+.md2-theme input[type="radio"] {
+  position: absolute; opacity: 0; pointer-events: none;
+}
+.md2-theme.selected { border-color: #3b82f6; background: #eff6ff; }
+.md2-theme.selected::after {
+  content: '✓'; position: absolute; top: 8px; right: 10px;
+  color: #3b82f6; font-weight: 700; font-size: 14px;
+}
+.md2-theme-name { font-weight: 600; font-size: 13px; color: #1e293b; margin-bottom: 3px; }
+.md2-theme-desc { font-size: 11px; color: #64748b; line-height: 1.5; }
+.md2-actions { display: flex; gap: 10px; flex-wrap: wrap; margin: 14px 0; align-items: center; }
+.md2-stat-row {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px; margin: 6px 0 14px;
+}
+.md2-stat-chip {
+  background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;
+  padding: 10px 14px; display: flex; align-items: center; gap: 10px;
+}
+.md2-stat-icon {
+  display:inline-flex; align-items:center; justify-content:center;
+  width:30px; height:30px; border-radius:6px;
+  color:#3b82f6; background:#eff6ff; flex-shrink:0;
+}
+.md2-stat-body { display:flex; flex-direction:column; gap:2px; min-width:0; }
+.md2-stat-label { font-size:11px; color:#64748b; }
+.md2-stat-value { font-size:14px; font-weight:600; color:#0f172a; }
+.md2-preview-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px; margin: 12px 0;
+}
+.md2-preview-card {
+  background: #fff; border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  display: flex; flex-direction: column; gap: 6px;
+}
+.md2-preview-card img {
+  width: 100%; height: auto; display: block;
+  border: 1px solid #e2e8f0; border-radius: 3px;
+  background: #fff;
+}
+.md2-preview-label { font-size: 11px; color: #64748b; text-align: center; }
+.md2-dl-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.md2-spinner {
+  display:inline-block; width:12px; height:12px;
+  border:2px solid #cbd5e1; border-top-color:#4f46e5; border-radius:50%;
+  animation: md2-spin 0.7s linear infinite; vertical-align:-2px; margin-right:4px;
+}
+@keyframes md2-spin { to { transform: rotate(360deg); } }
+.md2-error {
+  background:#fef2f2; border:1px solid #fecaca; color:#991b1b;
+  padding:10px 12px; border-radius:6px; font-size:13px; white-space:pre-wrap;
+}
+</style>
+{% endblock %}
+{% block content %}
+<h1>{{ icon('file-text', size=22) }} Markdown 轉文書</h1>
+<p class="muted">把 Markdown 內容套上主題樣式，輸出可下載的 <b>PDF / Word (DOCX) / OpenDocument (ODT)</b>。所有頁面自動產生預覽，下載前先看效果。</p>
+
+<div class="panel">
+  <h2 style="margin-top:0;">1. Markdown 內容</h2>
+  <label class="md2-drop" id="md2Drop" for="md2File">
+    <input type="file" id="md2File" accept=".md,.markdown,.txt,text/markdown,text/plain" hidden>
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#6366f1"
+         stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+      <polyline points="17 8 12 3 7 8"/>
+      <line x1="12" y1="3" x2="12" y2="15"/>
+    </svg>
+    <span><b>點此挑選</b>或拖曳檔案到此
+      <span class="hint">.md / .markdown / .txt（UTF-8，上限 5 MB）</span></span>
+  </label>
+  <textarea id="md2Text" class="md2-textarea" placeholder="把 Markdown 內容貼上來，或從上方上傳檔案 …
+
+# 我的文件
+這裡輸入 Markdown 內容...
+## 二、章節
+- 列表項目 1
+- 列表項目 2
+
+```python
+def hello():
+    print('Hello')
+```
+
+| 欄位 | 數值 |
+|------|------|
+| A    | 1    |
+| B    | 2    |
+"></textarea>
+  <div style="margin-top:12px; display:grid; grid-template-columns:max-content 1fr; gap:8px 12px; align-items:center; max-width:680px;">
+    <label style="font-size:13px;">標題（檔名用）</label>
+    <input type="text" id="md2Title" placeholder="不填則用「document」或上傳檔名"
+           style="padding:6px 10px; border:1px solid #d1d5db; border-radius:5px; font-size:13px;">
+  </div>
+</div>
+
+<div class="panel">
+  <h2 style="margin-top:0;">2. 配色主題</h2>
+  <p class="muted" style="font-size:12px; margin:0 0 8px;">影響 PDF / DOCX / ODT 輸出的視覺風格。</p>
+  <div class="md2-themes" id="md2Themes">
+    {% for t in themes %}
+    <label class="md2-theme{% if loop.first %} selected{% endif %}" data-theme="{{ t.id }}">
+      <input type="radio" name="md2-theme" value="{{ t.id }}"{% if loop.first %} checked{% endif %}>
+      <div class="md2-theme-name">{{ t.name }}</div>
+      <div class="md2-theme-desc">{{ t.desc }}</div>
+    </label>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="panel">
+  <div class="md2-actions">
+    <button class="btn btn-primary" id="md2Convert">{{ icon('refresh', size=12) }} 開始轉換</button>
+    <span id="md2Status" style="font-size:13px; color:#64748b;"></span>
+  </div>
+  <div id="md2Error" class="md2-error" hidden></div>
+</div>
+
+<div class="panel" id="md2ResultPanel" hidden>
+  <h2 style="margin-top:0;">3. 結果</h2>
+  <div class="md2-stat-row" id="md2Stat"></div>
+  <div class="md2-dl-row" id="md2Downloads"></div>
+  <div style="margin-top:14px; font-size:13px; color:#475569;">📄 所有頁面預覽（PDF render）：</div>
+  <div class="md2-preview-grid" id="md2Previews"></div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+{% raw %}
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  let lastResult = null;
+  let pickedFilename = '';  // remember last loaded file name to derive download stem
+
+  // ----- Theme selection (visual sync) -----
+  document.querySelectorAll('.md2-theme').forEach(t => {
+    t.addEventListener('click', () => {
+      document.querySelectorAll('.md2-theme').forEach(x => x.classList.remove('selected'));
+      t.classList.add('selected');
+      const r = t.querySelector('input[type="radio"]');
+      if (r) r.checked = true;
+    });
+  });
+
+  // ----- File drop / picker: reads content into textarea -----
+  const drop = $('md2Drop');
+  const fileInput = $('md2File');
+  ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, (e) => {
+    e.preventDefault(); e.stopPropagation();
+    drop.classList.add('is-dragover');
+  }));
+  ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, (e) => {
+    e.preventDefault(); e.stopPropagation();
+    drop.classList.remove('is-dragover');
+  }));
+  drop.addEventListener('drop', (e) => {
+    const f = e.dataTransfer?.files?.[0];
+    if (f) _readFile(f);
+  });
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files?.[0]) _readFile(fileInput.files[0]);
+  });
+  function _readFile(f) {
+    if (f.size > 5 * 1024 * 1024) {
+      alert('檔案超過 5 MB 上限');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      $('md2Text').value = e.target.result || '';
+      pickedFilename = f.name;
+      drop.classList.add('has-file');
+      drop.querySelector('span').innerHTML =
+        `<b>已載入</b> ${_esc(f.name)} · ${(f.size / 1024).toFixed(1)} KB
+        <span class="hint">點此換檔</span>`;
+      // auto-fill title from filename stem (if user hasn't typed one)
+      const titleEl = $('md2Title');
+      if (!titleEl.value.trim()) {
+        const stem = f.name.replace(/\.[^.]+$/, '');
+        titleEl.placeholder = `（已預設為 ${stem}）`;
+      }
+    };
+    reader.readAsText(f, 'utf-8');
+  }
+  function _esc(s) {
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  // ----- Convert -----
+  $('md2Convert').addEventListener('click', async () => {
+    const text = $('md2Text').value;
+    if (!text.trim()) { alert('請貼上 Markdown 內容，或拖入 .md 檔'); return; }
+    const theme = (document.querySelector('input[name="md2-theme"]:checked') || {}).value || 'classic';
+    const title = $('md2Title').value.trim() || (pickedFilename ? pickedFilename.replace(/\.[^.]+$/, '') : '');
+
+    const fd = new FormData();
+    fd.append('theme', theme);
+    if (title) fd.append('title', title);
+    fd.append('text', text);
+
+    const btn = $('md2Convert');
+    btn.disabled = true;
+    const orig = btn.innerHTML;
+    btn.innerHTML = '<span class="md2-spinner"></span>轉換中…';
+    $('md2Status').innerHTML = '<span class="md2-spinner"></span>轉換中（PDF + DOCX + ODT，可能要 10-30 秒）';
+    $('md2Error').hidden = true;
+    $('md2ResultPanel').hidden = true;
+
+    try {
+      const r = await fetch('/tools/markdown-to-doc/convert', { method: 'POST', body: fd });
+      if (!r.ok) {
+        const t = await r.text();
+        $('md2Error').textContent = '轉換失敗：' + t.slice(0, 400);
+        $('md2Error').hidden = false;
+        $('md2Status').textContent = '';
+        return;
+      }
+      const j = await r.json();
+      lastResult = j;
+      _renderResult(j);
+    } catch (e) {
+      $('md2Error').textContent = '請求失敗：' + e;
+      $('md2Error').hidden = false;
+      $('md2Status').textContent = '';
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = orig;
+    }
+  });
+
+  function _renderResult(j) {
+    const fileSvg  = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
+    const pagesSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="14" height="18" rx="2"/><path d="M7 7h6M7 11h6M7 15h4"/></svg>';
+    const hashSvg  = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg>';
+    const themeSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.93 0 1.5-.5 1.5-1.3 0-.4-.15-.7-.4-1-.25-.3-.4-.6-.4-1 0-.83.67-1.5 1.5-1.5H16c3.3 0 6-2.7 6-6 0-5.5-4.5-9.2-10-9.2z"/></svg>';
+    const _esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const chip = (icon, label, value) =>
+      `<div class="md2-stat-chip"><span class="md2-stat-icon">${icon}</span>` +
+      `<div class="md2-stat-body"><span class="md2-stat-label">${label}</span>` +
+      `<span class="md2-stat-value">${_esc(value)}</span></div></div>`;
+    const stat = $('md2Stat');
+    stat.innerHTML =
+      chip(fileSvg, '檔名', j.stem) +
+      chip(pagesSvg, '頁數', j.page_count) +
+      chip(hashSvg, '原文字數', j.char_count.toLocaleString()) +
+      chip(themeSvg, '主題', _themeLabel(j.theme));
+
+    const dl = $('md2Downloads');
+    const fmts = [
+      { id: 'pdf', name: 'PDF', cls: 'btn-primary' },
+      { id: 'docx', name: 'Word (DOCX)', cls: '' },
+      { id: 'odt', name: 'ODT', cls: '' },
+    ];
+    dl.innerHTML = '';
+    for (const f of fmts) {
+      const url = j.downloads[f.id];
+      const a = document.createElement('a');
+      a.className = 'btn ' + f.cls;
+      if (!f.cls) { a.style.background = '#fff'; a.style.border = '1px solid #d1d5db'; }
+      if (url) {
+        a.href = url; a.setAttribute('download', '');
+      } else {
+        a.style.opacity = 0.4; a.style.pointerEvents = 'none'; a.title = '此格式轉換失敗';
+      }
+      a.innerHTML = '⬇ 下載 ' + f.name;
+      dl.appendChild(a);
+    }
+
+    const grid = $('md2Previews');
+    grid.innerHTML = '';
+    j.preview_urls.forEach((url, idx) => {
+      const card = document.createElement('div');
+      card.className = 'md2-preview-card';
+      const img = document.createElement('img');
+      img.src = url; img.alt = `第 ${idx + 1} 頁預覽`; img.loading = 'lazy';
+      const lbl = document.createElement('div');
+      lbl.className = 'md2-preview-label';
+      lbl.textContent = `第 ${idx + 1} 頁 / 共 ${j.page_count} 頁`;
+      card.appendChild(img); card.appendChild(lbl);
+      grid.appendChild(card);
+    });
+
+    $('md2Status').textContent = '✓ 完成';
+    $('md2ResultPanel').hidden = false;
+  }
+
+  function _themeLabel(id) {
+    const el = document.querySelector(`.md2-theme[data-theme="${id}"] .md2-theme-name`);
+    return el ? el.textContent : id;
+  }
+})();
+</script>
+{% endraw %}
+{% endblock %}
