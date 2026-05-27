@@ -695,6 +695,9 @@ def ocr_pdf_to_searchable(
     ocr_engine_pages: dict[str, int] = {}  # engine_used -> page count
     ocr_engine_total_s = 0.0
     ocr_remote_url = ""
+    # admin 設定的 engine（給完成訊息對照是否退回到別的）
+    ocr_chosen_engine = ""
+    ocr_remote_on = False
     # 每頁各階段拿到的文字 — 給前端顯示「展開看每段成效」用
     stage_results: list[dict] = []
 
@@ -859,6 +862,8 @@ def ocr_pdf_to_searchable(
             from app.core import ocr_remote_settings as _ors_check
             chosen_engine = _oe.get_default_engine()
             remote_on = chosen_engine == "easyocr" and _ors_check.is_enabled_and_configured()
+            ocr_chosen_engine = chosen_engine
+            ocr_remote_on = remote_on
             engine_label = f"{chosen_engine}-remote(GPU)" if remote_on else chosen_engine
             _emit(cp, f"OCR 辨識中({engine_label} {langs})…")
             import time as _t_ocr
@@ -1094,6 +1099,8 @@ def ocr_pdf_to_searchable(
         "ocr_engine_pages": ocr_engine_pages,
         "ocr_engine_total_s": round(ocr_engine_total_s, 1),
         "ocr_remote_url": ocr_remote_url,
+        "ocr_chosen_engine": ocr_chosen_engine,
+        "ocr_remote_on": ocr_remote_on,
         "producer": producer,
         "tesseract_version": tess_v,
         "marker": MARKER_KEYWORD,

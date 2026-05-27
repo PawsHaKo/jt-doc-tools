@@ -4,6 +4,33 @@
 
 ---
 
+## [1.11.32] - 2026-05-27
+
+### 新增 — pdf-ocr 進行中可即時「停止辨識」
+
+長文件 OCR 中，「開始 OCR」旁多一個紅色「停止辨識」按鈕（辨識中才出現）。
+
+- 按下後立刻呼叫 `/api/jobs/{id}/cancel`，背景 worker 在下一個 page checkpoint 跳出（最多等一頁時間，通常數秒）
+- 狀態列顯示「已停止辨識」，progress bar 清除
+- 不需要重新上傳，可立刻改參數重跑
+
+技術細節：`progress_cb` 內偵測 `job.cancelled` → raise → `JobManager._run` 攔截並標 `status='cancelled'`。前端 polling 看到 `cancelled` 收尾。
+
+### 修正 — pdf-ocr 同時選繁中 + 簡中誤觸發退回 Tesseract
+
+**症狀**：UI 顯示「目前引擎：EasyOCR」，但完成訊息卻寫「本機 Tesseract (CPU)」。
+
+**根因**：EasyOCR 把 `ch_tra`（繁中）與 `ch_sim`（簡中）放在不同 model group，**不能同時載入**。Reader init 拋例外被 fallback 鏈 catch → 自動退回 Tesseract，但前端只顯示退回後的 engine，使用者誤以為 EasyOCR 自己就這樣慢。
+
+**修法**：
+- **前端 (A) 預先警告**：選了繁中 + 簡中時即時顯示黃底提示，建議擇一（不阻擋送出，但解釋為什麼會慢）
+- **後端 (B) 完成訊息標示退回**：選用 vs 實際使用 engine 不同時，訊息改為「選用 EasyOCR 失敗 → 退回 本機 Tesseract (CPU), 用時 88.0s」，使用者一眼看出原因
+- stats 加 `ocr_chosen_engine` 與 `ocr_remote_on` 兩欄，給未來 audit / 統計 hook 用
+
+**不影響**：單獨選繁中 / 單獨選簡中 / 繁中 + 英 / 簡中 + 英 / 其他 CJK 組合都正常走 EasyOCR。
+
+---
+
 ## [1.11.31] - 2026-05-27
 
 ### 新增 — Markdown 轉文書工具

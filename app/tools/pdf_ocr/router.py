@@ -463,6 +463,10 @@ async def run_ocr(upload_id: str, request: Request,
 
     def _run(job: "_jm.Job") -> None:
         def _progress(cur, total, msg):
+            # 使用者按「停止辨識」→ job.cancelled = True → raise 觸發 _run 跳出
+            # JobManager._run 偵測 job.cancelled 後會把 status 設成 'cancelled'
+            if job.cancelled:
+                raise RuntimeError("__cancelled_by_user__")
             job.progress = cur / max(total, 1) * 0.95
             job.message = msg
         try:
@@ -513,20 +517,36 @@ async def run_ocr(upload_id: str, request: Request,
             ocr_engine_pages = stats.get("ocr_engine_pages") or {}
             ocr_engine_total_s = stats.get("ocr_engine_total_s", 0)
             ocr_remote_url = stats.get("ocr_remote_url", "")
+            ocr_chosen_engine = stats.get("ocr_chosen_engine", "")
+            ocr_remote_on = stats.get("ocr_remote_on", False)
+            ENG_LABEL = {
+                "easyocr-remote": f"遠端 GPU EasyOCR @ {ocr_remote_url}",
+                "easyocr": "本機 EasyOCR (CPU)",
+                "tesseract": "本機 Tesseract (CPU)",
+            }
+            def _chosen_label() -> str:
+                if ocr_chosen_engine == "easyocr" and ocr_remote_on:
+                    return "遠端 GPU EasyOCR"
+                if ocr_chosen_engine == "easyocr":
+                    return "本機 EasyOCR"
+                if ocr_chosen_engine == "tesseract":
+                    return "本機 Tesseract"
+                return ocr_chosen_engine or "?"
             if ocr_engine_pages:
                 # 多 engine 顯示細項;單一 engine 簡潔
                 if len(ocr_engine_pages) == 1:
                     eng = next(iter(ocr_engine_pages))
-                    label = {
-                        "easyocr-remote": f"遠端 GPU EasyOCR @ {ocr_remote_url}",
-                        "easyocr": "本機 EasyOCR (CPU)",
-                        "tesseract": "本機 Tesseract (CPU)",
-                    }.get(eng, eng)
-                    extra += f"，{label}, 用時 {ocr_engine_total_s}s"
+                    label = ENG_LABEL.get(eng, eng)
+                    # 偵測退回：選用 vs 實際不同 → 標示「(退回)」
+                    used_root = eng.replace("-remote", "")
+                    if ocr_chosen_engine and used_root != ocr_chosen_engine:
+                        extra += f"，選用 {_chosen_label()} 失敗 → 退回 {label}, 用時 {ocr_engine_total_s}s"
+                    else:
+                        extra += f"，{label}, 用時 {ocr_engine_total_s}s"
                 else:
                     parts = []
                     for eng, n in ocr_engine_pages.items():
-                        parts.append(f"{eng}×{n}")
+                        parts.append(f"{ENG_LABEL.get(eng, eng)}×{n}")
                     extra += f"，OCR 引擎: {' / '.join(parts)} ({ocr_engine_total_s}s)"
             if stats.get("llm_full_used"):
                 t = stats.get("llm_full_total_s", 0)
@@ -627,6 +647,8 @@ async def api_pdf_ocr(
 
     def _run(job: "_jm.Job") -> None:
         def _progress(cur, total, msg):
+            if job.cancelled:
+                raise RuntimeError("__cancelled_by_user__")
             job.progress = cur / max(total, 1) * 0.95
             job.message = msg
         try:

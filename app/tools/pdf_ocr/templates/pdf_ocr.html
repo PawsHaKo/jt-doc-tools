@@ -384,6 +384,7 @@ details.po-langs-group > summary .more-hint { color:#94a3b8; font-weight:normal;
         {% endif %}
 
         <div class="po-langs-summary" id="poLangsSummary"></div>
+        <div id="poLangsWarn" style="display:none; margin-top:8px; padding:8px 12px; background:#fef3c7; border:1px solid #f59e0b; border-radius:6px; color:#92400e; font-size:13px;"></div>
       </div>
       {% else %}
       <div class="po-langs-empty">未偵測到已安裝的語言（tesseract 不可用？請確認系統已安裝 tesseract 與訓練檔）</div>
@@ -542,6 +543,7 @@ details.po-langs-group > summary .more-hint { color:#94a3b8; font-weight:normal;
 
 <div class="panel">
   <button class="btn btn-primary" id="btnRun" disabled>{{ icon('play', size=14) }} 開始 OCR</button>
+  <button class="btn btn-danger" id="btnStop" type="button" style="display:none; margin-left:8px;">{{ icon('close', size=14) }} 停止辨識</button>
   <span id="status" class="muted" style="margin-left:12px; font-size:13px;">請先上傳 PDF 或圖片</span>
   <div class="po-progress" style="display:none;" id="progressBar"><div></div></div>
   <div id="resultBox"></div>
@@ -676,8 +678,23 @@ const PO_ICON_WARN = {{ icon('warn', size=12) | tojson }};
   function getSelectedChips(){
     return document.querySelectorAll('.po-chip.is-active');
   }
+  const CURRENT_ENGINE = "{{ current_engine }}";
   function refreshLangSummary(){
     const chips = getSelectedChips();
+    // A. EasyOCR 互斥語言檢查 — ch_tra 與 ch_sim 分屬不同 model group，Reader 不
+    // 能同時載入，會 raise → 自動退回 Tesseract。提前警告使用者擇一。
+    const codes = Array.from(chips).map(c => c.dataset.lang);
+    const warnEl = document.getElementById('poLangsWarn');
+    if (warnEl) {
+      const hasTra = codes.includes('chi_tra');
+      const hasSim = codes.includes('chi_sim');
+      if (CURRENT_ENGINE === 'easyocr' && hasTra && hasSim) {
+        warnEl.style.display = 'block';
+        warnEl.textContent = '⚠ EasyOCR 不支援同時辨識「繁中」與「簡中」(兩者屬不同 model group，互斥)。如果同時勾選，EasyOCR 載入會失敗，系統會自動退回本機 Tesseract。建議擇一：文件以繁中為主→只勾繁中；以簡中為主→只勾簡中。';
+      } else {
+        warnEl.style.display = 'none';
+      }
+    }
     const items = Array.from(chips).map(c => {
       const codeEl = c.querySelector('.po-chip-code');
       return {
@@ -908,11 +925,29 @@ const PO_ICON_WARN = {{ icon('warn', size=12) | tojson }};
     }
   }
 
+  const btnStop = $('btnStop');
+  let currentJobId = null;
+  let userCancelled = false;
+  btnStop.addEventListener('click', async () => {
+    if (!currentJobId) return;
+    btnStop.disabled = true;
+    statusEl.textContent = '取消中…';
+    userCancelled = true;
+    try {
+      await fetch('/api/jobs/' + currentJobId + '/cancel', { method: 'POST' });
+    } catch (e) {
+      // ignore — polling 會自己抓到 status = 'cancelled'
+    }
+  });
+
   btnRun.addEventListener('click', async () => {
     if (!uploadId) return;
     const langsSel = getSelectedLangs();
     if (!langsSel) { statusEl.textContent = '請至少勾選一種 OCR 語言'; return; }
     setBtnBusy(true, '處理中…');
+    btnStop.style.display = 'inline-flex';
+    btnStop.disabled = false;
+    userCancelled = false;
     progressBar.style.display = 'block';
     progressInner.style.width = '5%';
     resultBox.innerHTML = '';
@@ -936,6 +971,7 @@ const PO_ICON_WARN = {{ icon('warn', size=12) | tojson }};
       if (!r.ok) throw new Error(await r.text());
       const j = await r.json();
       const jobId = j.job_id;
+      currentJobId = jobId;
       const t0 = Date.now();
       let lastMsg = '';
       let lastMsgTime = Date.now();
@@ -958,6 +994,8 @@ const PO_ICON_WARN = {{ icon('warn', size=12) | tojson }};
         }
         if (jj.status === 'done') {
           progressInner.style.width = '100%';
+          btnStop.style.display = 'none';
+          currentJobId = null;
           const stats = (jj.meta || {}).stats || {};
           const url = (jj.meta || {}).download_url || ('download/' + uploadId);
           const producer = stats.producer || 'jt-doc-tools pdf-ocr';
@@ -1058,11 +1096,25 @@ const PO_ICON_WARN = {{ icon('warn', size=12) | tojson }};
         if (jj.status === 'error') {
           throw new Error(jj.error || 'OCR 失敗');
         }
+        if (jj.status === 'cancelled') {
+          statusEl.textContent = '已停止辨識';
+          progressBar.style.display = 'none';
+          btnStop.style.display = 'none';
+          currentJobId = null;
+          setBtnBusy(false);
+          return;
+        }
       }
       throw new Error('OCR 超時');
     } catch (e) {
-      statusEl.textContent = '失敗：' + e.message;
+      if (userCancelled) {
+        statusEl.textContent = '已停止辨識';
+      } else {
+        statusEl.textContent = '失敗：' + e.message;
+      }
       progressBar.style.display = 'none';
+      btnStop.style.display = 'none';
+      currentJobId = null;
       setBtnBusy(false);
     }
   });
