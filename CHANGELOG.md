@@ -658,7 +658,7 @@ OCR 文字辨識工具的 LLM 整合區新增「**LLM 直接辨識**」選項（
 
 ### 改善
 
-- 掃描拼合「全部清除」確認對話框改用本工具的 modal（`window.showConfirm`），不再用瀏覽器原生 `confirm()`（避免顯示「doc.jason.tools 顯示」這種突兀字樣）。
+- 掃描拼合「全部清除」確認對話框改用本工具的 modal（`window.showConfirm`），不再用瀏覽器原生 `confirm()`（避免顯示「（網站網域）顯示」這種突兀字樣）。
 
 ---
 

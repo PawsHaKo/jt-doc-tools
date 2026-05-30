@@ -40,7 +40,7 @@ uv run python tests/stress/run_stress.py --users 10 --duration 60 \
 
 # auth-on 環境（必須帶 token，否則所有請求 302 → /login）
 uv run python tests/stress/run_stress.py --users 10 --duration 60 \
-    --base-url https://doc.jason.tools \
+    --base-url https://your-server.example.com \
     --token jtdt_xxxxxxxxxxxxxx
 
 # CSV 匯出（給 Grafana / Excel 分析每筆請求）
