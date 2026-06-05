@@ -27,7 +27,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from ...config import settings
-from ...core.llm_settings import llm_settings
+from ...core.llm_settings import llm_settings, DEFAULT_SETTINGS
 
 
 router = APIRouter()
@@ -38,14 +38,53 @@ router = APIRouter()
 _SENT_SPLIT_RE = re.compile(
     r"(?<=[\.!?。！？])\s+|(?<=[\.!?。！？])(?=[A-Z一-鿿])|\n+"
 )
-# 上限保護：超過這數量就不全送 LLM（會 timeout / 沒意義）
+# 同步端點上限：/translate-batch 與公開 /api/translate-doc 是「單一 request 翻全部」，
+# 一次太多句會 proxy / server timeout，所以維持較低的固定上限。
+# UI 的逐句翻譯走 /translate-one 並發，不受此限，改吃 admin 設定 translate_max_sentences
+# （見 _ui_max_sentences()）。
 MAX_SENTENCES = 800
 MAX_TEXT_BYTES = 2 * 1024 * 1024  # 2 MB raw text
 
 
+def _ui_max_sentences() -> int:
+    """UI 逐句翻譯的句數上限（admin 可在 LLM 設定調整，預設 20000）。"""
+    try:
+        return int(llm_settings.get().get(
+            "translate_max_sentences",
+            DEFAULT_SETTINGS["translate_max_sentences"]))
+    except (TypeError, ValueError):
+        return int(DEFAULT_SETTINGS["translate_max_sentences"])
+
+
+# 判斷一段文字「有沒有可翻譯內容」= 含字母 / 數字 / CJK / 韓 / 假名。
+# 純標點 / 符號（如 PDF 目錄的點引導符切出來的「.」「. . .」）視為無內容。
+_HAS_CONTENT_RE = re.compile(
+    r"[0-9A-Za-z぀-ヿ㐀-鿿가-힯ｦ-ﾟ]")
+
+
+def _merge_punct_fragments(sents: list[str]) -> list[str]:
+    """把「純標點 / 符號」的碎片併入前一句。
+
+    PDF 目錄的點引導符（Title ........ 5）被切句器拆成一堆獨立「.」，
+    每個各佔一列很醜。這裡把無內容碎片併回前一句尾端；若前一句已以相同
+    標點結尾就直接丟棄，避免「Management . . . .」。開頭就出現的無內容碎片
+    （沒有前句可併）直接丟棄。"""
+    out: list[str] = []
+    for s in sents:
+        if _HAS_CONTENT_RE.search(s):
+            out.append(s)
+        elif out:
+            prev = out[-1]
+            if prev and s and prev[-1] == s[-1]:
+                continue  # 前句已以同樣標點結尾 → 丟棄碎片
+            out[-1] = (prev + " " + s).strip()
+        # else: 開頭的無內容碎片 → 丟棄
+    return out
+
+
 def _split_sentences(text: str) -> list[str]:
     """把長文字切成「逐句」的 list。空白行 / 純 whitespace 略過。
-    保留行序，每句去頭尾空白。"""
+    保留行序，每句去頭尾空白；純標點碎片併入前一句。"""
     if not text:
         return []
     # Normalize line endings
@@ -56,7 +95,7 @@ def _split_sentences(text: str) -> list[str]:
         s = (s or "").strip()
         if s:
             out.append(s)
-    return out
+    return _merge_punct_fragments(out)
 
 
 _LIST_MARKER_RE = re.compile(
@@ -467,6 +506,11 @@ async def index(request: Request):
             "llm_default_model": s.get("model", ""),
             "llm_url": s.get("base_url", ""),
             "office_engine": detect_engine(),
+            # 逐句翻譯上限 + 分頁大小（admin 可在 LLM 設定調整）
+            "trd_max_sentences": int(s.get("translate_max_sentences",
+                                           DEFAULT_SETTINGS["translate_max_sentences"])),
+            "trd_page_size": int(s.get("translate_page_size",
+                                       DEFAULT_SETTINGS["translate_page_size"])),
         },
     )
 
@@ -481,12 +525,14 @@ async def extract_text(file: UploadFile = File(...)):
     text = _extract_text_from_file(file.filename or "", data)
     sentences = _split_sentences(text)
     detected = _detect_language(text)
+    ui_max = _ui_max_sentences()
     return {
         "filename": file.filename,
         "char_count": len(text),
         "sentence_count": len(sentences),
-        "sentences": sentences[:MAX_SENTENCES],
-        "truncated": len(sentences) > MAX_SENTENCES,
+        "sentences": sentences[:ui_max],
+        "truncated": len(sentences) > ui_max,
+        "max_sentences": ui_max,
         "detected_lang": detected,
     }
 

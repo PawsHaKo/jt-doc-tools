@@ -210,6 +210,22 @@
       <span class="muted" style="font-size:12px;">逐句翻譯時同時送 LLM 的 worker 數（1-16，預設 4）。本機 Ollama 建議 4-8；高 VRAM 可拉到 12+；雲端 API 設小一點避免被 rate-limit</span>
     </div>
   </div>
+  <div class="form-row">
+    <label>逐句翻譯最大句數</label>
+    <div class="field" style="display:flex; gap:8px; align-items:center;">
+      <input type="number" id="translate_max_sentences" min="100" max="200000" step="100"
+             value="{{ settings.translate_max_sentences|default(20000) }}" style="width:120px;" />
+      <span class="muted" style="font-size:12px;">逐句翻譯一次最多處理幾句（100-200000，預設 20000）。逐句並發不會單一 request timeout，但句數越多瀏覽器分頁要開越久（每千句約 2-3 分）。超過上限只取前 N 句</span>
+    </div>
+  </div>
+  <div class="form-row">
+    <label>對照表每頁筆數</label>
+    <div class="field" style="display:flex; gap:8px; align-items:center;">
+      <input type="number" id="translate_page_size" min="20" max="5000" step="10"
+             value="{{ settings.translate_page_size|default(200) }}" style="width:120px;" />
+      <span class="muted" style="font-size:12px;">逐句翻譯結果對照表每頁顯示幾列（20-5000，預設 200）。句數一大時全部塞進頁面會卡頓，故分頁顯示；數字越大每頁越長但翻頁越少</span>
+    </div>
+  </div>
 </div>
 
 <div class="panel">
@@ -506,6 +522,8 @@ async function saveSettings() {
     consecutive_required:     parseInt($('consecutive_required').value),
     overall_timeout_seconds:  parseFloat($('overall_timeout_seconds').value),
     translate_concurrency:    parseInt($('translate_concurrency').value),
+    translate_max_sentences:  parseInt($('translate_max_sentences').value),
+    translate_page_size:      parseInt($('translate_page_size').value),
     debug_log:                $('debug_log').checked,
   };
   const r = await fetch('/admin/api/llm/settings', {

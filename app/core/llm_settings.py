@@ -38,6 +38,13 @@ DEFAULT_SETTINGS: dict = {
     # 翻譯並行數 — 逐句翻譯每句一個 prompt 序列送 LLM 太慢；並行能 4-8 倍速。
     # 過高會壓垮本機 Ollama 或讓 GPU OOM；admin 自己依 LLM server 體質設。
     "translate_concurrency": 4,
+    # 逐句翻譯（UI）一次最多處理幾句。UI 是逐句並發呼叫，不會單一 request
+    # timeout，所以可放大；上限主要是防呆（避免使用者誤丟超大檔讓瀏覽器跑數小時）。
+    # 公開同步 API /api/translate-doc 另有較低的固定上限（單一 request 會 timeout）。
+    "translate_max_sentences": 20000,
+    # 逐句翻譯對照表每頁顯示幾列。句數一大時全部塞進 DOM 會讓瀏覽器卡頓 /
+    # 吃記憶體，所以前端分頁、一次只 render 一頁。admin 依機器體質調整。
+    "translate_page_size": 200,
     "timeout_seconds": 600,          # single HTTP call ceiling — 翻譯 / vision / reasoning 可能 5-10 分鐘
     # 預設拉到 600s（v1.8.58 起，舊 300s）— 客戶實測 gemma 大模型推理單筆 8m+，
     # 加上 reverse proxy 多層 timeout 任一斬掉就 504。要再長就 admin UI 改。

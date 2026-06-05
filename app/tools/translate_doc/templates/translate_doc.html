@@ -89,7 +89,13 @@
            style="width:100%; margin-top:8px; box-sizing:border-box;"
            placeholder="自填其他領域…（選填，會與上方點選的領域一起送進 prompt）">
   </div>
-  <textarea class="field" id="srcText" rows="10" style="margin-top:14px; width:100%; resize:vertical; font-family: -apple-system, 'PingFang TC', 'Microsoft JhengHei', sans-serif;" placeholder="貼上要翻譯的文字，或上傳檔案到上方欄位…"></textarea>
+  <div class="trd-srctext-wrap" style="position:relative; margin-top:14px;">
+    <textarea class="field" id="srcText" rows="10" style="width:100%; resize:vertical; font-family: -apple-system, 'PingFang TC', 'Microsoft JhengHei', sans-serif;" placeholder="貼上要翻譯的文字，或上傳檔案到上方欄位…"></textarea>
+    <div class="trd-parse-overlay" id="trdParseOverlay" hidden>
+      <span class="trd-spinner"></span>
+      <span class="trd-parse-label" id="trdParseLabel">解析中…</span>
+    </div>
+  </div>
   <div style="margin-top:8px; display:flex; align-items:center; gap:14px;">
     <button class="btn btn-primary" id="btnTranslate" {% if not llm_enabled %}disabled title="LLM 未啟用"{% endif %}>{{ icon('play', size=14) }} 開始翻譯</button>
     <button class="btn" type="button" id="btnStop" hidden style="background:#fee2e2; color:#991b1b; border-color:#fca5a5;">■ 停止翻譯</button>
@@ -134,8 +140,10 @@
   </div>
   <div class="trd-progress-meta" id="trdProgressMeta" hidden></div>
   <div class="trd-grid" id="trdGrid"></div>
+  <div class="trd-pager" id="trdPager" hidden></div>
   <div style="margin-top:10px; font-size:11.5px; color:#94a3b8;">
     每一列對應一句。點 <b>↻</b> 可重新請 LLM 翻譯該句。空白列代表原文是空行。
+    句數多時會自動分頁（每頁筆數由管理員在 LLM 設定調整）；翻譯在背景持續進行，翻頁不影響。
   </div>
 </details>
 
@@ -243,6 +251,21 @@
   .trd-drop-zone.has-file { border-color: #16a34a; background: #f0fdf4; border-style: solid; }
   .trd-drop-zone.has-warn { border-color: #dc2626; background: #fef2f2; border-style: solid; }
   .trd-drop-icon { color: #6366f1; flex-shrink: 0; line-height: 0; }
+
+  /* === 上傳解析中：文字區 spinner overlay === */
+  .trd-parse-overlay {
+    position: absolute; inset: 0; display: flex; align-items: center;
+    justify-content: center; gap: 10px; border-radius: 6px; z-index: 5;
+    background: rgba(248,250,252,0.85); color: #475569; font-size: 13px;
+    font-weight: 500;
+  }
+  .trd-parse-overlay[hidden] { display: none; }
+  .trd-spinner {
+    width: 20px; height: 20px; border: 2.5px solid #c7d2fe;
+    border-top-color: #4f46e5; border-radius: 50%;
+    animation: trd-spin 0.7s linear infinite; flex-shrink: 0;
+  }
+  @keyframes trd-spin { to { transform: rotate(360deg); } }
   .trd-drop-zone.has-file .trd-drop-icon { color: #16a34a; }
   .trd-drop-zone.has-warn .trd-drop-icon { color: #dc2626; }
   .trd-drop-text { font-size: 12.5px; color: #475569; line-height: 1.4;
@@ -268,6 +291,26 @@
     font-variant-numeric: tabular-nums;
   }
   .trd-progress-meta b { color: #1e293b; font-weight: 600; }
+
+  /* === 對照表分頁控制列 === */
+  .trd-pager {
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    flex-wrap: wrap; margin-top: 10px; font-size: 12px; color: #475569;
+  }
+  .trd-pager[hidden] { display: none; }
+  .trd-pager button {
+    border: 1px solid #cbd5e1; background: #fff; color: #334155;
+    border-radius: 6px; padding: 3px 10px; cursor: pointer; font-size: 12px;
+    line-height: 1.6;
+  }
+  .trd-pager button:hover:not(:disabled) { background: #eef2ff; border-color: #a5b4fc; color: #3730a3; }
+  .trd-pager button:disabled { opacity: .45; cursor: default; }
+  .trd-pager .trd-pager-info { padding: 0 6px; }
+  .trd-pager .trd-pager-info b { color: #1e293b; }
+  .trd-pager input.trd-pager-jump {
+    width: 56px; text-align: center; border: 1px solid #cbd5e1;
+    border-radius: 6px; padding: 3px 4px; font-size: 12px;
+  }
 
   .trd-grid {
     display: grid;
@@ -552,6 +595,9 @@ function getDomainHint() {
 
 const LLM_MODEL = {{ llm_model|tojson }};
 const OFFICE_ENGINE = {{ office_engine|tojson }};
+// 逐句翻譯上限 + 分頁大小（admin 在 LLM 設定可調）
+const TRD_MAX_SENTENCES = {{ trd_max_sentences|default(20000)|int }};
+const TRD_PAGE_SIZE = Math.max(1, {{ trd_page_size|default(200)|int }});
 // 哪些副檔名需要 soffice (DOCX/DOC/ODT/ODS/ODP/RTF) → 顯示「OxOffice 解析中…」
 const _OFFICE_EXTS = ['.docx', '.doc', '.odt', '.ods', '.odp', '.rtf'];
 function _engineLabelFor(filename) {
@@ -575,6 +621,12 @@ const trdGrid = $('trdGrid');
 const charCounter = $('charCounter');
 
 let currentSentences = [];
+// 逐句翻譯結果資料陣列（單一事實來源）。每項 {src, translated, error, skipped}
+// 或 undefined（尚未翻譯）。copy / 匯出 / 分頁渲染全部讀這個，不讀 DOM —
+// 分頁後 DOM 只有當前頁，讀 DOM 會漏掉其它頁。
+let trdResults = [];
+let trdCurrentPage = 0;             // 目前頁碼（0-based）
+let trdHeaderLangs = {src: '', tgt: ''};  // 渲染頁首用
 // v1.7.52：上傳檔名 + 翻譯完成時間，匯出文件 / 試算表時帶到頁首給使用者參考。
 let trdUploadedName = '';
 let trdTranslatedAt = '';
@@ -583,6 +635,22 @@ let trdTranslatedAt = '';
 // 不該獨立成句 — 跟下一句合併。
 const LIST_MARKER_RE = /^([IVXLCM]+\.?|[ivxlcm]+\.?|\d+[.)]?|[A-Za-z][.)]|[•◦▪■◆●○\-*])$/;
 
+// 含可翻譯內容 = 字母 / 數字 / CJK / 韓 / 假名（與後端 _HAS_CONTENT_RE 對齊）
+const HAS_CONTENT_RE = /[0-9A-Za-z぀-ヿ㐀-鿿가-힯ｦ-ﾟ]/;
+// 把純標點碎片（PDF 目錄點引導符切出來的「.」「. . .」）併入前一句。
+function _mergePunctFragments(arr) {
+  const out = [];
+  for (const s of arr) {
+    if (HAS_CONTENT_RE.test(s)) { out.push(s); continue; }
+    if (out.length) {
+      const prev = out[out.length - 1];
+      if (prev && s && prev[prev.length - 1] === s[s.length - 1]) continue;
+      out[out.length - 1] = (prev + ' ' + s).trim();
+    }
+    // 開頭的無內容碎片 → 丟棄
+  }
+  return out;
+}
 function _mergeListMarkers(arr) {
   const out = [];
   let pending = null;
@@ -608,7 +676,7 @@ function _splitClient(text) {
   const norm = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   const raw = norm.split(/(?<=[\.!?。！？])\s+|(?<=[\.!?。！？])(?=[A-Z一-鿿])|\n+/);
   const cleaned = raw.map(s => (s || '').trim()).filter(Boolean);
-  return _mergeListMarkers(cleaned);
+  return _mergeListMarkers(_mergePunctFragments(cleaned));
 }
 
 function refreshCounter() {
@@ -631,6 +699,12 @@ async function handleUploadedFile(f) {
   const parseLabel = _engineLabelFor(f.name);
   dropText.innerHTML = `<b>${escapeHTML(f.name)}</b><div class="trd-drop-hint">${escapeHTML(parseLabel)}</div>`;
   charCounter.textContent = parseLabel;
+  // 文字區疊 spinner overlay，明確告知正在解析
+  const parseOverlay = $('trdParseOverlay');
+  const parseLabelEl = $('trdParseLabel');
+  if (parseLabelEl) parseLabelEl.textContent = parseLabel;
+  if (parseOverlay) parseOverlay.hidden = false;
+  srcText.disabled = true;
   try {
     const r = await fetch('/tools/translate-doc/extract-text', {method:'POST', body: fd});
     if (!r.ok) {
@@ -665,6 +739,8 @@ async function handleUploadedFile(f) {
     dropText.innerHTML = origText;
   } finally {
     fileInput.value = '';
+    if (parseOverlay) parseOverlay.hidden = true;
+    srcText.disabled = false;
   }
 }
 
@@ -695,6 +771,11 @@ btnClear.addEventListener('click', () => {
   srcText.value = '';
   resultPanel.hidden = true;
   trdGrid.innerHTML = '';
+  trdResults = [];
+  currentSentences = [];
+  trdCurrentPage = 0;
+  const pager = $('trdPager');
+  if (pager) { pager.hidden = true; pager.innerHTML = ''; }
   refreshCounter();
 });
 
@@ -773,6 +854,96 @@ function renderHeader(srcLang, tgtLang, srcChars, tgtChars) {
     <div class="h-ctl"></div>
   `;
   return hd;
+}
+
+// ===== 對照表分頁 =====
+// trdResults 是資料來源；只 render 當前頁的列，其餘留在資料陣列。
+function _trdTotalPages() {
+  return Math.max(1, Math.ceil(currentSentences.length / TRD_PAGE_SIZE));
+}
+function _trdPageBounds(page) {
+  const start = page * TRD_PAGE_SIZE;
+  const end = Math.min(currentSentences.length, start + TRD_PAGE_SIZE);
+  return [start, end];
+}
+// 由 trdResults[i] 產生一列（undefined = 尚未翻譯 → loading）
+function _rowFromResult(i) {
+  const r = trdResults[i];
+  if (r === undefined) {
+    const row = renderRow(i, currentSentences[i] ?? '', '翻譯中…', '');
+    row.classList.add('is-loading');
+    return row;
+  }
+  let translated = r.translated;
+  let extraCls = '';
+  if (r.skipped === 'filler') { translated = '（填寫位）'; extraCls = 'is-filler'; }
+  const row = renderRow(i, r.src ?? currentSentences[i] ?? '', translated, r.error);
+  if (extraCls) row.classList.add(extraCls);
+  return row;
+}
+// 全文字數統計（讀資料陣列，跨所有頁）
+function _trdTotalChars() {
+  let src = 0, tgt = 0;
+  for (let i = 0; i < currentSentences.length; i++) {
+    src += (currentSentences[i] || '').length;
+    const r = trdResults[i];
+    if (r) tgt += (r.translated || '').length;
+  }
+  return {src, tgt};
+}
+function renderPage(page) {
+  const totalPages = _trdTotalPages();
+  trdCurrentPage = Math.max(0, Math.min(totalPages - 1, page));
+  const [start, end] = _trdPageBounds(trdCurrentPage);
+  const ch = _trdTotalChars();
+  trdGrid.innerHTML = '';
+  trdGrid.appendChild(renderHeader(trdHeaderLangs.src, trdHeaderLangs.tgt, ch.src, ch.tgt));
+  for (let i = start; i < end; i++) trdGrid.appendChild(_rowFromResult(i));
+  renderPager();
+}
+function renderPager() {
+  const pager = $('trdPager');
+  const total = currentSentences.length;
+  const totalPages = _trdTotalPages();
+  if (totalPages <= 1) { pager.hidden = true; pager.innerHTML = ''; return; }
+  pager.hidden = false;
+  const [start, end] = _trdPageBounds(trdCurrentPage);
+  const p = trdCurrentPage;
+  pager.innerHTML = '';
+  const mk = (label, target, disabled) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = label; b.disabled = !!disabled;
+    if (!disabled) b.addEventListener('click', () => renderPage(target));
+    return b;
+  };
+  pager.appendChild(mk('« 首頁', 0, p === 0));
+  pager.appendChild(mk('‹ 上一頁', p - 1, p === 0));
+  const info = document.createElement('span');
+  info.className = 'trd-pager-info';
+  info.innerHTML = `第 <b>${p + 1}</b> / ${totalPages} 頁（第 ${start + 1}–${end} 句，共 <b>${total}</b> 句）`;
+  pager.appendChild(info);
+  pager.appendChild(mk('下一頁 ›', p + 1, p >= totalPages - 1));
+  pager.appendChild(mk('末頁 »', totalPages - 1, p >= totalPages - 1));
+  const jump = document.createElement('input');
+  jump.type = 'number'; jump.className = 'trd-pager-jump';
+  jump.min = '1'; jump.max = String(totalPages); jump.value = String(p + 1);
+  jump.title = '跳到指定頁';
+  jump.addEventListener('change', () => {
+    const n = parseInt(jump.value);
+    if (!isNaN(n)) renderPage(n - 1);
+  });
+  pager.appendChild(jump);
+}
+// 某句結果到達 → 更新該列（只在當前頁可見時才動 DOM）
+function _trdApplyRow(i) {
+  if (Math.floor(i / TRD_PAGE_SIZE) !== trdCurrentPage) return;
+  const old = trdGrid.querySelector(`.trd-row[data-idx="${i}"]`);
+  if (old) old.replaceWith(_rowFromResult(i));
+}
+// 即時更新譯文字數（header 那行的「N 字」）
+function _refreshTgtCharCounter() {
+  const head = trdGrid.querySelector('.trd-head .h-tgt .h-stat');
+  if (head) head.textContent = _trdTotalChars().tgt + ' 字';
 }
 
 // ---- Column resize ----
@@ -866,20 +1037,21 @@ trdGrid.addEventListener('click', async (e) => {
       method: 'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({src, source_lang: srcLang.value, target_lang: tgtLang.value, domain: getDomainHint()}),
     });
+    // 寫回資料陣列（單一事實來源），再依資料重畫該列 — copy / 匯出 / 翻頁都讀得到。
     if (!r.ok) {
-      tgtCell.classList.add('is-error');
-      tgtCell.textContent = '失敗：' + await r.text();
-      return;
-    }
-    const j = await r.json();
-    if (j.error) {
-      tgtCell.classList.add('is-error'); tgtCell.textContent = j.error;
+      trdResults[idx] = {src, translated: '', error: '失敗：' + await r.text()};
     } else {
-      tgtCell.textContent = j.translated || '（無）';
-      if (!j.translated) tgtCell.classList.add('is-empty');
+      const j = await r.json();
+      trdResults[idx] = {
+        src: j.src ?? src, translated: j.translated ?? '',
+        error: j.error ?? '', skipped: j.skipped ?? '',
+      };
     }
+    _trdApplyRow(idx);
+    _refreshTgtCharCounter();
   } finally {
-    row.classList.remove('is-loading');
+    const cur = trdGrid.querySelector(`.trd-row[data-idx="${idx}"]`);
+    if (cur) cur.classList.remove('is-loading');
   }
 });
 
@@ -948,19 +1120,21 @@ btnTranslate.addEventListener('click', async () => {
   if (!text.trim()) return alert('請先輸入或上傳要翻譯的文字');
   currentSentences = _splitClient(text);
   if (!currentSentences.length) return alert('沒有可翻譯的內容');
-  // Render rows immediately with loading state
-  trdGrid.innerHTML = '';
+  // 句數上限保護（admin 可調）— 超過只取前 N 句，避免瀏覽器跑數小時。
+  if (currentSentences.length > TRD_MAX_SENTENCES) {
+    alert(`原文超過上限，僅取前 ${TRD_MAX_SENTENCES} 句翻譯。\n（管理員可在 LLM 設定調整「逐句翻譯最大句數」）`);
+    currentSentences = currentSentences.slice(0, TRD_MAX_SENTENCES);
+  }
   const total = currentSentences.length;
-  const srcChars = currentSentences.reduce((n, s) => n + (s || '').length, 0);
-  trdGrid.appendChild(renderHeader(srcLang.value, tgtLang.value, srcChars, 0));
-  const rowEls = currentSentences.map((s, i) => {
-    const row = renderRow(i, s, '翻譯中…', '');
-    row.classList.add('is-loading');
-    trdGrid.appendChild(row);
-    return row;
-  });
+  // 初始化資料陣列 + 分頁。只 render 第一頁，其餘留在 trdResults，翻好再依頁渲染，
+  // 避免一次把幾萬列塞進 DOM 造成卡頓。
+  trdResults = new Array(total);
+  trdHeaderLangs = {src: srcLang.value, tgt: tgtLang.value};
+  trdCurrentPage = 0;
+  renderPage(0);
   resultPanel.hidden = false;
-  resultMeta.textContent = `${total} 句送出（模型：${LLM_MODEL || '?'}）`;
+  const pagesNote = _trdTotalPages() > 1 ? `，分 ${_trdTotalPages()} 頁` : '';
+  resultMeta.textContent = `${total} 句送出${pagesNote}（模型：${LLM_MODEL || '?'}）`;
   btnTranslate.disabled = true;
   btnTranslate.dataset.orig = btnTranslate.innerHTML;
   btnTranslate.innerHTML = `翻譯中… (${LLM_MODEL || '?'})`;
@@ -979,17 +1153,9 @@ btnTranslate.addEventListener('click', async () => {
   // translate, and Run 1's worker promises hadn't fully resolved yet).
   const myCtl = _translateAbortCtl;
   const t0 = performance.now();
-  const results = new Array(total);
   let done = 0;
   let firstError = null;
   _updateProgress(0, total, t0);
-
-  // 即時更新譯文字數（header 那行的「0 字」）— 每完成一句就 patch
-  function _refreshTgtCharCounter() {
-    const total = results.reduce((n, r) => n + (r && r.translated || '').length, 0);
-    const head = trdGrid.querySelector('.trd-head .h-tgt .h-stat');
-    if (head) head.textContent = total + ' 字';
-  }
 
   // 簡易並行池：N workers 從 queue 拿 idx
   let nextIdx = 0;
@@ -1001,29 +1167,15 @@ btnTranslate.addEventListener('click', async () => {
       const src = currentSentences[i];
       try {
         const res = await _translateOne(i, src);
-        results[i] = res;
-        // 更新該列 — filler 直接 echo 原文，譯文欄顯示「（填寫位）」
-        const oldRow = rowEls[i];
-        let translated = res.translated;
-        let extraCls = '';
-        if (res.skipped === 'filler') {
-          translated = '（填寫位）';
-          extraCls = 'is-filler';
-        }
-        const newRow = renderRow(i, res.src, translated, res.error);
-        if (extraCls) newRow.classList.add(extraCls);
-        oldRow.replaceWith(newRow);
-        rowEls[i] = newRow;
+        trdResults[i] = res;
+        _trdApplyRow(i);   // 只在當前頁可見時才動 DOM
       } catch (e) {
         if (e.name === 'AbortError' || _translateCancelled) {
           return;  // user pressed stop — silently exit worker
         }
         if (!firstError) firstError = e.message || String(e);
-        results[i] = {src, translated: '', error: e.message || String(e)};
-        const oldRow = rowEls[i];
-        const newRow = renderRow(i, src, '', e.message || String(e));
-        oldRow.replaceWith(newRow);
-        rowEls[i] = newRow;
+        trdResults[i] = {src, translated: '', error: e.message || String(e)};
+        _trdApplyRow(i);
       }
       done++;
       _updateProgress(done, total, t0);
@@ -1036,16 +1188,13 @@ btnTranslate.addEventListener('click', async () => {
       workers.push(worker());
     }
     await Promise.all(workers);
-    // Final tally
-    const srcCharsAll = results.reduce((n, r) => n + (r && r.src || '').length, 0);
-    const tgtCharsAll = results.reduce((n, r) => n + (r && r.translated || '').length, 0);
-    // Replace header to update target char count
-    const oldHead = trdGrid.firstChild;
-    if (oldHead) oldHead.remove();
-    const newHead = renderHeader(srcLang.value, tgtLang.value, srcCharsAll, tgtCharsAll);
-    trdGrid.insertBefore(newHead, trdGrid.firstChild);
+    // Final tally（字數讀資料陣列，跨所有頁）
+    const ch = _trdTotalChars();
+    const srcCharsAll = ch.src, tgtCharsAll = ch.tgt;
+    // 重畫目前頁，讓 header 字數與列狀態都到最終值
+    renderPage(trdCurrentPage);
     const elapsed = (performance.now() - t0) / 1000;
-    const finishedCount = results.filter(r => r).length;
+    const finishedCount = trdResults.filter(r => r).length;
     if (_translateCancelled) {
       resultMeta.textContent = `已中止 — 完成 ${finishedCount}/${total} 句、原文 ${srcCharsAll} 字、譯文 ${tgtCharsAll} 字 · 用時 ${elapsed.toFixed(1)} 秒 · 模型：${LLM_MODEL || '?'}`;
     } else {
@@ -1072,26 +1221,36 @@ btnTranslate.addEventListener('click', async () => {
   }
 });
 
+// 取第 i 句的「顯示用」原文 / 譯文（讀資料陣列，與畫面所見一致）。
+// 分頁後 DOM 只剩當前頁，copy / 匯出一律改讀 trdResults 才能涵蓋全部句子。
+function _trdPairAt(i) {
+  const src = currentSentences[i] || '';
+  const r = trdResults[i];
+  let tgt = '', isError = false, isEmpty = false;
+  if (r) {
+    if (r.error) { isError = true; }                       // 錯誤 → 視為無譯文
+    else if (r.skipped === 'filler') { tgt = '（填寫位）'; }
+    else { tgt = r.translated || ''; if (!tgt) isEmpty = true; }
+  } else { isEmpty = true; }                               // 尚未翻譯
+  return {src, tgt, isError, isEmpty};
+}
 $('btnCopyTgt').addEventListener('click', (e) => {
   e.stopPropagation();   // 別讓父層 <summary> 接到 → 觸發摺疊
   const lines = [];
-  trdGrid.querySelectorAll('.trd-row').forEach(row => {
-    const tgt = row.querySelector('.tgt');
-    if (!tgt.classList.contains('is-error') && !tgt.classList.contains('is-empty')) {
-      lines.push(tgt.textContent);
-    }
-  });
+  for (let i = 0; i < currentSentences.length; i++) {
+    const p = _trdPairAt(i);
+    if (!p.isError && !p.isEmpty) lines.push(p.tgt);
+  }
   navigator.clipboard.writeText(lines.join('\n'));
   showToast?.('已複製譯文', 'ok');
 });
 $('btnCopySxs').addEventListener('click', (e) => {
   e.stopPropagation();
   const lines = [];
-  trdGrid.querySelectorAll('.trd-row').forEach(row => {
-    const src = row.querySelector('.src').textContent;
-    const tgt = row.querySelector('.tgt').textContent;
-    lines.push(src + '\n' + tgt + '\n');
-  });
+  for (let i = 0; i < currentSentences.length; i++) {
+    const p = _trdPairAt(i);
+    lines.push(p.src + '\n' + p.tgt + '\n');
+  }
   navigator.clipboard.writeText(lines.join('\n'));
   showToast?.('已複製對照', 'ok');
 });
@@ -1099,13 +1258,13 @@ $('btnCopySxs').addEventListener('click', (e) => {
 // ============ 匯出檔案（v1.7.51）============
 // 三組按鈕（文字 / 文件 / 試算表），各自一個 dropdown menu。點 menu 內項目
 // 把所有翻譯對 POST 到 /tools/translate-doc/export，server 產對應檔丟回。
+// 讀 trdResults（跨所有頁），不讀 DOM。
 function _trdGetPairs() {
   const pairs = [];
-  trdGrid.querySelectorAll('.trd-row').forEach(row => {
-    const src = row.querySelector('.src')?.textContent || '';
-    const tgt = row.querySelector('.tgt')?.textContent || '';
-    pairs.push({source: src, target: tgt});
-  });
+  for (let i = 0; i < currentSentences.length; i++) {
+    const p = _trdPairAt(i);
+    pairs.push({source: p.src, target: p.tgt});
+  }
   return pairs;
 }
 async function _trdExport(format) {

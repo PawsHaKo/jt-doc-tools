@@ -717,6 +717,16 @@ def build_router(templates) -> APIRouter:
                     "Base URL 格式錯誤"
                 )
                 return JSONResponse({"ok": False, "error": user_msg}, status_code=400)
+        # 數值欄位 clamp 防呆（避免 0 / 負數 / 超大值）。
+        def _clamp_int(key, lo, hi):
+            if key in body:
+                try:
+                    body[key] = max(lo, min(hi, int(body[key])))
+                except (TypeError, ValueError):
+                    body.pop(key, None)  # 非數值就丟掉，保留原值
+        _clamp_int("translate_max_sentences", 100, 200000)
+        _clamp_int("translate_page_size", 20, 5000)
+        _clamp_int("translate_concurrency", 1, 64)
         # admin 改了 LLM 設定（base_url / model / 其他）— 把 model profile cache
         # 全部清掉，下次 LLM call 會重抓 capabilities
         try:
