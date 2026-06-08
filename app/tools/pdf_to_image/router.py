@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import re
 import uuid
 import zipfile
 from pathlib import Path
@@ -158,8 +159,15 @@ async def download(upload_id: str, request: Request):
         pass
     base = orig.rsplit(".", 1)[0]
 
-    # Find all rendered page PNGs
-    pages = sorted(work.glob(f"p2i_{upload_id}_p*.png"))
+    # Find all rendered page PNGs. NOTE: sort by the NUMERIC page index parsed
+    # from the filename — a plain string sort gives _p1, _p10, _p11 … _p2 …
+    # which (combined with re-numbering) scrambled the ZIP filenames for any
+    # PDF with ≥10 pages (page 10 got renamed _p2.png, etc.).
+    def _page_num(p: Path) -> int:
+        m = re.search(r"_p(\d+)\.png$", p.name)
+        return int(m.group(1)) if m else 0
+
+    pages = sorted(work.glob(f"p2i_{upload_id}_p*.png"), key=_page_num)
     if not pages:
         raise HTTPException(404, "沒有產生的圖片，請重新上傳")
 
@@ -170,11 +178,12 @@ async def download(upload_id: str, request: Request):
             filename=f"{base}.png",
         )
 
-    # Multi-page → ZIP bundle
+    # Multi-page → ZIP bundle. Use the page's OWN number from its filename for
+    # the arcname (do NOT re-enumerate) so it always matches the PDF page.
     zip_path = work / f"p2i_{upload_id}.zip"
     with zipfile.ZipFile(str(zip_path), "w", zipfile.ZIP_DEFLATED) as z:
-        for i, p in enumerate(pages, start=1):
-            z.write(p, arcname=f"{base}_p{i}.png")
+        for p in pages:
+            z.write(p, arcname=f"{base}_p{_page_num(p)}.png")
     return FileResponse(
         str(zip_path), media_type="application/zip",
         filename=f"{base}.zip",
