@@ -224,18 +224,19 @@ def _container_mem(psutil_mod) -> Optional[dict]:
     # cgroup v2
     current = _cg_read_int("/sys/fs/cgroup/memory.current")
     if current is not None:
-        # 扣掉可回收的檔案快取（inactive_file），得到 working set，與 Proxmox
-        # 對容器顯示的記憶體用量一致；直接用 memory.current 會把 cache 也算進去
-        # 而偏高。
-        inactive = 0
+        # 扣掉可回收的檔案快取（inactive_file + active_file，即 LRU 上所有
+        # file-backed page cache），得到 working set，與 Proxmox 對容器顯示的
+        # 記憶體用量一致；直接用 memory.current 會把 cache 也算進去而偏高，
+        # 只扣 inactive_file 又扣不夠。
+        cache = 0
         try:
             with open("/sys/fs/cgroup/memory.stat", encoding="utf-8") as f:
                 for line in f:
-                    if line.startswith("inactive_file "):
-                        inactive = int(line.split()[1]); break
+                    if line.startswith(("inactive_file ", "active_file ")):
+                        cache += int(line.split()[1])
         except Exception:
             pass
-        used = max(0, current - inactive)
+        used = max(0, current - cache)
         lim = _cg_read_str("/sys/fs/cgroup/memory.max")
         total = int(lim) if (lim and lim != "max") else psutil_mod.virtual_memory().total
         sw_used = _cg_read_int("/sys/fs/cgroup/memory.swap.current") or 0
@@ -250,15 +251,15 @@ def _container_mem(psutil_mod) -> Optional[dict]:
     # cgroup v1
     usage = _cg_read_int("/sys/fs/cgroup/memory/memory.usage_in_bytes")
     if usage is not None:
-        inactive = 0
+        cache = 0
         try:
             with open("/sys/fs/cgroup/memory/memory.stat", encoding="utf-8") as f:
                 for line in f:
-                    if line.startswith("total_inactive_file "):
-                        inactive = int(line.split()[1]); break
+                    if line.startswith(("total_inactive_file ", "total_active_file ")):
+                        cache += int(line.split()[1])
         except Exception:
             pass
-        used = max(0, usage - inactive)
+        used = max(0, usage - cache)
         lim = _cg_read_int("/sys/fs/cgroup/memory/memory.limit_in_bytes")
         total = lim if (lim and lim < (1 << 62)) else psutil_mod.virtual_memory().total
         memsw = _cg_read_int("/sys/fs/cgroup/memory/memory.memsw.usage_in_bytes")

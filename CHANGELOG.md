@@ -4,6 +4,13 @@
 
 ---
 
+## [1.11.75] - 2026-06-09
+
+### 修正 — 容器記憶體 working set 計算對齊 Proxmox（扣全部檔案快取）
+
+- 1.11.74 的容器記憶體只扣 `inactive_file`，仍比 Proxmox 顯示偏高。改扣**全部 LRU 檔案快取**（`inactive_file` + `active_file`），working set 與 Proxmox 對容器的記憶體用量一致（實測 ≈ 364 MB vs Proxmox ≈ 372 MB，差額僅為 cache 隨時間漂移）。
+- 說明：容器內**看不到** swap 上限（Proxmox 主機端 config 不下放給容器，cgroup `memory.swap.max` 為 `max`、LXCFS `/proc/meminfo` SwapTotal 為 0），故 swap 顯示為本容器實際用量（通常 0）、總量無法由容器內取得。
+
 ## [1.11.74] - 2026-06-09
 
 ### 修正 — 系統狀態頁在容器內的記憶體、磁碟 I/O 也改抓容器自己的（延續 1.11.73）
