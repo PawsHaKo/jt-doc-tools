@@ -54,6 +54,32 @@ def _clear_session_cookie(response: Response) -> None:
     response.delete_cookie(sessions.COOKIE_NAME, path="/")
 
 
+def _sso_logout_redirect(request: Request, user: dict, token: str) -> Optional[str]:
+    """For SSO-sourced sessions, return the IdP logout URL (RP-initiated OIDC
+    end_session, or SAML SP-initiated SLO) so logout also ends the IdP session.
+    None → caller just lands on /login (local logout only)."""
+    src = (user or {}).get("source")
+    if src not in ("oidc", "saml"):
+        return None
+    try:
+        from ..core import sso_settings, oidc, saml, sso_store, sessions as _ses
+        scheme = (request.headers.get("X-Forwarded-Proto", "").lower()
+                  or request.url.scheme)
+        host = request.headers.get("X-Forwarded-Host") or request.url.netloc
+        base = sso_settings.base_url() or f"{scheme}://{host}"
+        if src == "oidc" and sso_settings.oidc_enabled():
+            return oidc.logout_url(sso_settings.get_oidc(reveal=True),
+                                   post_logout_redirect=base + "/login")
+        if src == "saml" and sso_settings.saml_enabled():
+            ni, si = sso_store.pop_saml_session(_ses._hash(token)) if token else ("", "")
+            return saml.logout_url(request, sso_settings.get_saml(reveal=True), base,
+                                   name_id=ni, session_index=si,
+                                   return_to=base + "/login")
+    except Exception:
+        return None
+    return None
+
+
 # In-memory rate limit for /change-password failed attempts.
 # Maps user_id → (last_fail_ts, fail_count). After 5 fails within 10 min
 # the user is locked out from change-password (their normal login still works).
@@ -484,14 +510,20 @@ def build_router(templates) -> APIRouter:
     @router.post("/logout")
     async def logout(request: Request):
         token = request.cookies.get(sessions.COOKIE_NAME, "")
+        cur = None
+        dest = "/login"
         if token:
             cur = sessions.lookup(token)
+            # Compute SSO logout redirect BEFORE revoking (SAML needs the stored
+            # NameID keyed by this token; OIDC needs the user's source).
+            if cur:
+                dest = _sso_logout_redirect(request, cur, token) or "/login"
             sessions.revoke(token)
             if cur:
                 audit_db.log_event(
                     "logout", username=cur["username"], ip=_client_ip(request),
                 )
-        resp = RedirectResponse("/login", status_code=302)
+        resp = RedirectResponse(dest, status_code=302)
         _clear_session_cookie(resp)
         return resp
 

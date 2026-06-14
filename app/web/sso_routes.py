@@ -79,10 +79,18 @@ def _login_error(msg: str) -> RedirectResponse:
     return RedirectResponse(f"/login?error={quote(msg)}", status_code=302)
 
 
-def _finish_login(request: Request, user: dict, next_url: str) -> Response:
+def _finish_login(request: Request, user: dict, next_url: str, *,
+                  saml_session: dict | None = None) -> Response:
     ip = _client_ip(request)
     ua = request.headers.get("User-Agent", "")
     token, expires_at = sessions.issue(user["user_id"], remember=False, ip=ip, ua=ua)
+    # Stash SAML NameID + SessionIndex (keyed by session token hash) so
+    # SP-initiated Single-Logout can build a proper LogoutRequest later.
+    if saml_session:
+        from ..core import sso_store
+        sso_store.save_saml_session(
+            sessions._hash(token), saml_session.get("nameid", ""),
+            saml_session.get("session_index", ""), expires_at)
     resp = RedirectResponse(safe_next(next_url), status_code=302)
     _set_session_cookie(resp, token, remember=False, request=request, expires_at=expires_at)
     resp.delete_cookie(_SSO_TX_COOKIE, path="/")
@@ -176,7 +184,32 @@ def build_router(templates) -> APIRouter:
         except (saml.SAMLError, sso_provision.SSOProvisionError) as e:
             _audit("login_fail", ip, detail=f"saml: {e}")
             return _login_error(str(e))
-        return _finish_login(request, user, ident.get("relay_state", "/"))
+        return _finish_login(request, user, ident.get("relay_state", "/"),
+                             saml_session={"nameid": ident.get("nameid", ""),
+                                           "session_index": ident.get("session_index", "")})
+
+    @router.api_route("/auth/saml/sls", methods=["GET", "POST"])
+    async def saml_sls(request: Request):
+        """IdP Single-Logout endpoint: validate the SLO message, tear down our
+        local session, then redirect to where the IdP asked (or /login)."""
+        if not sso_settings.saml_enabled():
+            return _login_error("SAML 登入未啟用")
+        cfg = sso_settings.get_saml(reveal=True)
+        try:
+            redirect_to = saml.process_sls(request, cfg, _public_base(request),
+                                           dict(request.query_params))
+        except saml.SAMLError:
+            redirect_to = "/login"
+        # Revoke our own session regardless of the SLO outcome.
+        token = request.cookies.get(sessions.COOKIE_NAME, "")
+        if token:
+            try:
+                sessions.revoke(token)
+            except Exception:
+                pass
+        resp = RedirectResponse(safe_next(redirect_to) or "/login", status_code=302)
+        resp.delete_cookie(sessions.COOKIE_NAME, path="/")
+        return resp
 
     @router.get("/auth/saml/metadata")
     async def saml_metadata(request: Request):

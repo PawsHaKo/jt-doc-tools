@@ -82,6 +82,7 @@
     <div><label>群組 claim</label><input id="o_groups_claim" value="{{ sso.oidc.groups_claim }}"/></div>
     <div><label>管理員群組（選填，此群組成員自動為 admin）</label><input id="o_admin_group" value="{{ sso.oidc.admin_group }}"/></div>
   </div>
+  <label style="display:block; margin-top:6px;"><input type="checkbox" id="o_require_https" {% if sso.oidc.require_https %}checked{% endif %}/> 強制 HTTPS（建議開啟；內網 http IdP 才取消）</label>
   <p><button class="btn" id="testOidc">測試 OIDC discovery</button> <span id="oidcResult" class="muted"></span></p>
 </div>
 
@@ -93,6 +94,7 @@
     <div><label>登入鈕文字</label><input id="s_display_name" value="{{ sso.saml.display_name }}"/></div>
     <div><label>IdP EntityID</label><input id="s_idp_entity_id" value="{{ sso.saml.idp_entity_id }}"/></div>
     <div><label>IdP SSO URL（HTTP-Redirect）</label><input id="s_idp_sso_url" value="{{ sso.saml.idp_sso_url }}"/></div>
+    <div><label>IdP SLO URL（選填，單一登出用）</label><input id="s_idp_slo_url" value="{{ sso.saml.idp_slo_url }}"/></div>
     <div><label>SP EntityID（留空 = metadata 網址）</label><input id="s_sp_entity_id" value="{{ sso.saml.sp_entity_id }}"/></div>
     <div><label>使用者名稱屬性（留空用 NameID）</label><input id="s_username_attr" value="{{ sso.saml.username_attr }}"/></div>
     <div><label>Email 屬性</label><input id="s_email_attr" value="{{ sso.saml.email_attr }}"/></div>
@@ -142,6 +144,7 @@
         issuer: $('o_issuer').value,
         client_id: $('o_client_id').value,
         client_secret_enc: (oSecret === SECRET_KEPT || oSecret === '') ? SECRET_KEPT : oSecret,
+        require_https: $('o_require_https').checked,
         scopes: $('o_scopes').value,
         username_claim: $('o_username_claim').value,
         email_claim: $('o_email_claim').value,
@@ -154,6 +157,7 @@
         display_name: $('s_display_name').value,
         idp_entity_id: $('s_idp_entity_id').value,
         idp_sso_url: $('s_idp_sso_url').value,
+        idp_slo_url: $('s_idp_slo_url').value,
         idp_x509cert: $('s_idp_x509cert').value,
         sp_entity_id: $('s_sp_entity_id').value,
         want_assertions_signed: $('s_want_assertions_signed').checked,

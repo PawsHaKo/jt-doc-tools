@@ -225,3 +225,36 @@ class TestAccountIsolation:
         with pytest.raises(p.SSOProvisionError):
             p.provision("oidc", external_id="sub-dis", username="dwight",
                         display_name="D")
+
+
+class TestHardening:
+    def test_require_https_default_blocks_http(self):
+        from app.core import oidc
+        with pytest.raises(oidc.OIDCError):
+            oidc._check_url("http://idp.internal/x")  # default require_https=True
+        # explicit opt-out allows internal http
+        assert oidc._check_url("http://idp.internal/x", require_https=False)
+        # https always fine
+        assert oidc._check_url("https://idp.internal/x")
+
+    def test_oidc_logout_url(self, monkeypatch):
+        from app.core import oidc
+        cfg = {"client_id": "cid"}
+        monkeypatch.setattr(oidc, "discover", lambda c: {
+            "issuer": "https://i", "authorization_endpoint": "https://i/a",
+            "token_endpoint": "https://i/t", "jwks_uri": "https://i/jwks",
+            "end_session_endpoint": "https://i/logout"})
+        url = oidc.logout_url(cfg, post_logout_redirect="https://app/login")
+        assert url and url.startswith("https://i/logout?")
+        assert "post_logout_redirect_uri=https%3A%2F%2Fapp%2Flogin" in url
+        # no end_session_endpoint → None (caller does local logout only)
+        monkeypatch.setattr(oidc, "discover", lambda c: {
+            "issuer": "https://i", "authorization_endpoint": "https://i/a",
+            "token_endpoint": "https://i/t", "jwks_uri": "https://i/jwks"})
+        assert oidc.logout_url(cfg, post_logout_redirect="https://app/login") is None
+
+    def test_saml_logout_url_none_without_slo(self):
+        from app.core import saml
+        cfg = {"idp_entity_id": "e", "idp_sso_url": "https://i/sso", "idp_x509cert": "x"}
+        # no idp_slo_url configured → SLO unavailable → None
+        assert saml.logout_url(None, cfg, "https://app", name_id="n") is None

@@ -4,6 +4,16 @@
 
 ---
 
+## [1.12.3] - 2026-06-14
+
+### 強化 — SSO 防禦縱深三項（SAML 重放防護、OIDC 強制 HTTPS、單一登出 SLO）
+
+- **SAML assertion 重放防護**：除了 python3-saml 既有的簽章 + 時效檢查，再加一層「已用過的 assertion ID 一律拒絕」(`app/core/sso_store.py`，SQLite 持久化，依 NotOnOrAfter 過期清理) —— 擋住有效視窗內以同一份已簽署 Response 重放登入。
+- **OIDC 強制 HTTPS（預設開）**：discovery / token / JWKS / end_session 端點預設只接受 https，擋掉明文網路上對 http discovery 的 MITM（會被換成惡意 token / JWKS 端點）。內網 http IdP 可在 `/admin/sso` 取消「強制 HTTPS」。
+- **單一登出（SLO）**：登出時除了清本站 session，也把使用者導去 IdP 結束 IdP 端工作階段 —— OIDC 走 discovery 的 `end_session_endpoint`（RP-initiated logout）；SAML 走 SP-initiated `LogoutRequest`（新增 `/auth/saml/sls` 接收端點，登入時記下 NameID / SessionIndex 供登出建請求）。IdP 未提供登出端點時自動退回純本站登出。
+- `/admin/sso` 新增「強制 HTTPS」開關與「IdP SLO URL」欄位。
+- 測試：SAML 重放拒絕（e2e）、`require_https` 預設擋 http、OIDC / SAML `logout_url` 行為（共 +4 項）；全套 900 passed。
+
 ## [1.12.2] - 2026-06-14
 
 ### 改善 — `/admin/sso` 加常見 IdP 設定範例

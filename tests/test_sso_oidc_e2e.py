@@ -106,6 +106,7 @@ def _configure_sso(monkeypatch, tmp_path, idp):
     s.save({"base_url": "",
             "oidc": {"enabled": True, "issuer": idp.issuer,
                      "client_id": idp.client_id, "client_secret_enc": "shh",
+                     "require_https": False,  # local mini-IdP runs on http
                      "groups_claim": "groups", "admin_group": "JTDT-Admins"}})
 
 

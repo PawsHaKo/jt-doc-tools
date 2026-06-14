@@ -23,6 +23,10 @@ def _acs_url(base_url: str) -> str:
     return base_url.rstrip("/") + "/auth/saml/acs"
 
 
+def _sls_url(base_url: str) -> str:
+    return base_url.rstrip("/") + "/auth/saml/sls"
+
+
 def _metadata_url(base_url: str) -> str:
     return base_url.rstrip("/") + "/auth/saml/metadata"
 
@@ -39,6 +43,10 @@ def _settings_dict(cfg: dict[str, Any], base_url: str) -> dict[str, Any]:
             "assertionConsumerService": {
                 "url": _acs_url(base_url),
                 "binding": "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST",
+            },
+            "singleLogoutService": {
+                "url": _sls_url(base_url),
+                "binding": "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect",
             },
             "NameIDFormat": "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified",
             "x509cert": cfg.get("sp_x509cert") or "",
@@ -57,8 +65,15 @@ def _settings_dict(cfg: dict[str, Any], base_url: str) -> dict[str, Any]:
             "wantMessagesSigned": False,
             "requestedAuthnContext": False,
             "authnRequestsSigned": bool(cfg.get("sp_private_key")),
+            "logoutRequestSigned": bool(cfg.get("sp_private_key")),
+            "logoutResponseSigned": bool(cfg.get("sp_private_key")),
         },
     }
+    if cfg.get("idp_slo_url"):
+        s["idp"]["singleLogoutService"] = {
+            "url": cfg["idp_slo_url"],
+            "binding": "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect",
+        }
     return s
 
 
@@ -109,6 +124,16 @@ def process_acs(request: Any, cfg: dict[str, Any], base_url: str,
         raise SAMLError(f"SAML 驗證失敗：{reason[:160]}")
     if not auth.is_authenticated():
         raise SAMLError("SAML 未通過驗證")
+    # Replay protection: reject an assertion ID we've already consumed (signature
+    # + NotOnOrAfter are checked by OneLogin above, but not cross-request replay).
+    from . import sso_store
+    try:
+        aid = auth.get_last_assertion_id()
+        naa = auth.get_last_assertion_not_on_or_after()
+    except Exception:
+        aid, naa = "", None
+    if sso_store.assertion_is_replay(aid, float(naa) if naa else None):
+        raise SAMLError("SAML assertion 已被使用過（疑似重放攻擊）")
     attrs = auth.get_attributes() or {}
     name_id = auth.get_nameid() or ""
 
@@ -128,9 +153,48 @@ def process_acs(request: Any, cfg: dict[str, Any], base_url: str,
     if gattr and gattr in attrs:
         gv = attrs.get(gattr) or []
         groups = [str(g) for g in gv] if isinstance(gv, (list, tuple)) else [str(gv)]
+    try:
+        session_index = auth.get_session_index() or ""
+    except Exception:
+        session_index = ""
     return {"nameid": name_id, "username": username, "email": email,
-            "name": name, "groups": groups,
+            "name": name, "groups": groups, "session_index": session_index,
             "relay_state": (post_data.get("RelayState") or "/")}
+
+
+def logout_url(request: Any, cfg: dict[str, Any], base_url: str, *,
+               name_id: str = "", session_index: str = "",
+               return_to: str = "/") -> str | None:
+    """SP-initiated Single-Logout: build a LogoutRequest to the IdP's SLS and
+    return the redirect URL. Returns None when the IdP has no SLO endpoint
+    configured (caller then just does local logout)."""
+    if not cfg.get("idp_slo_url"):
+        return None
+    try:
+        auth = _auth(request, cfg, base_url)
+        return auth.logout(return_to=return_to, name_id=name_id or None,
+                           session_index=session_index or None)
+    except Exception as e:
+        logger.warning("SAML logout_url build failed: %s", e.__class__.__name__)
+        return None
+
+
+def process_sls(request: Any, cfg: dict[str, Any], base_url: str,
+                get_data: dict) -> str:
+    """Handle the IdP's LogoutResponse / LogoutRequest at our SLS endpoint.
+    Returns a redirect URL (the IdP-provided RelayState or '/login'). Local
+    session teardown is the route's responsibility; this only validates SLO."""
+    try:
+        auth = _auth(request, cfg, base_url)
+        # keep_local_session=True: we clear our own session in the route.
+        url = auth.process_slo(keep_local_session=True, delete_session_cb=None)
+        errors = auth.get_errors()
+        if errors:
+            logger.warning("SAML SLS errors: %s", errors)
+        return url or "/login"
+    except Exception as e:
+        logger.warning("SAML process_slo failed: %s", e.__class__.__name__)
+        return "/login"
 
 
 def sp_metadata(cfg: dict[str, Any], base_url: str) -> str:

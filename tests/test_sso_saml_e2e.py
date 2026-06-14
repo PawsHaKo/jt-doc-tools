@@ -150,3 +150,26 @@ def test_saml_response_signed_by_wrong_key_rejected(admin_session, monkeypatch, 
                follow_redirects=False)
     assert r.status_code == 302 and "error" in r.headers["location"]
     assert not c.cookies.get("jtdt_session")
+
+
+def test_saml_assertion_replay_rejected(admin_session, monkeypatch, tmp_path):
+    """The same valid signed Response must be accepted once, then rejected on
+    replay (within its validity window)."""
+    from app.core import sso_store
+    sso_store._reset_for_tests()
+    key_pem, cert_pem, cert_body = _make_idp_cert()
+    _configure(monkeypatch, tmp_path, cert_body)
+    resp_b64 = _signed_response(key_pem, cert_pem, nameid="replay@corp.com")
+
+    c1 = TestClient(app_main.app)
+    r1 = c1.post("/auth/saml/acs", data={"SAMLResponse": resp_b64, "RelayState": "/"},
+                 follow_redirects=False)
+    assert r1.status_code == 302 and "error" not in r1.headers["location"]
+    assert c1.cookies.get("jtdt_session")
+
+    # Replay the very same assertion → must be rejected.
+    c2 = TestClient(app_main.app)
+    r2 = c2.post("/auth/saml/acs", data={"SAMLResponse": resp_b64, "RelayState": "/"},
+                 follow_redirects=False)
+    assert r2.status_code == 302 and "error" in r2.headers["location"]
+    assert not c2.cookies.get("jtdt_session")

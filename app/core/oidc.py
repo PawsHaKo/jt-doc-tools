@@ -39,10 +39,14 @@ _DISCO_CACHE: dict[str, tuple[float, dict]] = {}
 _DISCO_TTL = 3600.0
 
 
-def _check_url(url: str) -> str:
+def _check_url(url: str, *, require_https: bool = True) -> str:
     p = urlparse(url)
-    if p.scheme not in ("https", "http"):
-        raise OIDCError(f"OIDC URL 必須是 http/https：{url[:80]}")
+    allowed = ("https",) if require_https else ("https", "http")
+    if p.scheme not in allowed:
+        if require_https and p.scheme == "http":
+            raise OIDCError(
+                "OIDC 端點必須是 https（如為內網 http IdP，請在設定取消「強制 HTTPS」）")
+        raise OIDCError(f"OIDC URL scheme 不允許：{url[:80]}")
     host = (p.hostname or "").lower()
     if not host or host in _BLOCKED_HOSTS:
         raise OIDCError("OIDC URL 指向被封鎖的位址")
@@ -62,11 +66,13 @@ def discover(cfg: dict[str, Any]) -> dict[str, Any]:
     issuer = (cfg.get("issuer") or "").rstrip("/")
     if not issuer:
         raise OIDCError("OIDC issuer 未設定")
+    require_https = cfg.get("require_https", True)
     now = time.time()
     cached = _DISCO_CACHE.get(issuer)
     if cached and cached[0] > now:
         return cached[1]
-    url = _check_url(f"{issuer}/.well-known/openid-configuration")
+    url = _check_url(f"{issuer}/.well-known/openid-configuration",
+                     require_https=require_https)
     try:
         with httpx.Client(timeout=_HTTP_TIMEOUT, follow_redirects=False) as cli:
             r = cli.get(url)
@@ -85,7 +91,10 @@ def discover(cfg: dict[str, Any]) -> dict[str, Any]:
     if doc["issuer"].rstrip("/") != issuer:
         raise OIDCError("OIDC discovery issuer 與設定不符")
     for k in ("authorization_endpoint", "token_endpoint", "jwks_uri"):
-        _check_url(doc[k])
+        _check_url(doc[k], require_https=require_https)
+    # end_session_endpoint is optional (RP-initiated logout); validate if present.
+    if doc.get("end_session_endpoint"):
+        _check_url(doc["end_session_endpoint"], require_https=require_https)
     _DISCO_CACHE[issuer] = (now + _DISCO_TTL, doc)
     return doc
 
@@ -169,3 +178,23 @@ def map_claims(cfg: dict[str, Any], claims: dict[str, Any]) -> dict[str, Any]:
     groups = [str(g) for g in raw_groups] if isinstance(raw_groups, (list, tuple)) else []
     return {"sub": sub, "username": username, "email": email,
             "name": name, "groups": groups}
+
+
+def logout_url(cfg: dict[str, Any], *, post_logout_redirect: str,
+               id_token_hint: str = "") -> str | None:
+    """RP-initiated logout (OIDC Session Management): return the IdP's
+    end_session_endpoint with our post-logout redirect, or None if the IdP
+    doesn't advertise one (caller then just does local logout)."""
+    try:
+        doc = discover(cfg)
+    except OIDCError:
+        return None
+    ep = doc.get("end_session_endpoint")
+    if not ep:
+        return None
+    params = {"post_logout_redirect_uri": post_logout_redirect,
+              "client_id": cfg.get("client_id", "")}
+    if id_token_hint:
+        params["id_token_hint"] = id_token_hint
+    sep = "&" if "?" in ep else "?"
+    return ep + sep + urlencode(params)

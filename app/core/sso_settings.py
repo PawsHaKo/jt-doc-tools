@@ -49,6 +49,7 @@ _DEFAULTS: dict[str, Any] = {
         "issuer": "",                      # e.g. https://login.microsoftonline.com/<tenant>/v2.0
         "client_id": "",
         "client_secret_enc": "",           # Fernet ciphertext
+        "require_https": True,             # reject http endpoints (turn off for internal http IdP)
         "scopes": "openid email profile",
         "username_claim": "preferred_username",
         "email_claim": "email",
@@ -61,6 +62,7 @@ _DEFAULTS: dict[str, Any] = {
         "display_name": "SAML 登入",
         "idp_entity_id": "",
         "idp_sso_url": "",                  # IdP SingleSignOnService (HTTP-Redirect)
+        "idp_slo_url": "",                  # IdP SingleLogoutService (optional, for SLO)
         "idp_x509cert": "",                # IdP signing cert (PEM body, no headers)
         "sp_entity_id": "",                # our SP EntityID; blank → <base>/auth/saml/metadata
         "want_assertions_signed": True,
