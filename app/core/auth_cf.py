@@ -76,6 +76,30 @@ def is_configured() -> bool:
     return bool(_team_domain() and _aud())
 
 
+def _mask_aud(aud: str) -> str:
+    """Mask the AUD for display — never show the full value on a web page."""
+    if not aud:
+        return "未設定"
+    return ("••••" + aud[-4:]) if len(aud) >= 4 else "已設定"
+
+
+def public_status() -> dict:
+    """Non-sensitive CF status for display on the admin auth-settings page.
+
+    Intentionally returns only what is safe to show an admin: the login
+    domain (which users hit anyway), a masked AUD, and the COUNT of admin
+    e-mails (not the addresses themselves). The full AUD and the actual
+    admin e-mail list are deliberately omitted.
+    """
+    return {
+        "active": is_configured(),
+        "team_domain": _team_domain(),
+        "issuer": _issuer(),
+        "aud_masked": _mask_aud(_aud()),
+        "admin_email_count": len(_admin_emails()),
+    }
+
+
 # ---------- JWKS client (lazy, cached by PyJWT's PyJWKClient) ----------
 
 _jwks_client = None  # type: ignore[var-annotated]

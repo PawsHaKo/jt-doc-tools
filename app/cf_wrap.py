@@ -22,11 +22,13 @@ This file is sidecar-only; it never edits the upstream tree. The single
 """
 from __future__ import annotations
 
+import html as _html
 import logging
+import re as _re
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse, RedirectResponse
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from app.main import app  # noqa: E402  — importing runs main.py's middleware setup
 from app.core import auth_cf
@@ -45,6 +47,58 @@ _PUBLIC_PREFIXES = ("/static/", "/healthz", "/favicon", "/branding/", "/api/")
 # pointless under trusted-proxy auth — CF would just re-authenticate on the next
 # request. Redirect to CF's logout endpoint instead.
 _CF_LOGOUT = "/cdn-cgi/access/logout"
+
+
+_AUTH_SETTINGS_PATH = "/admin/auth-settings"
+_MAIN_TAG_RE = _re.compile(r"<main[^>]*>", _re.IGNORECASE)
+
+
+def _cf_status_banner() -> str:
+    """Build the non-sensitive 'Cloudflare Access is active' notice injected
+    into /admin/auth-settings. Only shows what auth_cf.public_status() deems
+    safe (masked AUD, e-mail count — never the full AUD or the addresses)."""
+    st = auth_cf.public_status()
+    issuer = _html.escape(st["issuer"] or "(未設定)")
+    aud = _html.escape(st["aud_masked"])
+    n = st["admin_email_count"]
+    return f"""
+<div class="panel" style="border-left:4px solid #2563eb;background:#eff6ff;">
+  <h2 style="margin-top:0;">🛡 此站目前由 Cloudflare Access（Zero Trust）驗證身分</h2>
+  <p class="muted" style="margin-top:-4px;">
+    實際登入由 Cloudflare 邊緣處理(可能再轉企業 IdP)。下方的本機認證設定
+    僅作為<b>權限 / 角色基礎</b>與<b>緊急救援</b>之用,日常登入不會用到密碼表單。
+  </p>
+  <table class="kv">
+    <tr><th>認證模式</th><td><b>Cloudflare Access (Zero Trust)</b></td></tr>
+    <tr><th>登入網域</th><td>{issuer}</td></tr>
+    <tr><th>Application AUD</th><td>{aud}<span class="muted"> (已遮蔽)</span></td></tr>
+    <tr><th>預設管理員 email</th><td>{n} 個<span class="muted"> (由 CF_ADMIN_EMAILS 指定,不顯示內容)</span></td></tr>
+  </table>
+  <p class="muted" style="font-size:12px;margin-bottom:0;">
+    這些值由伺服器環境變數設定,需在主機上調整;此頁唯讀顯示。
+  </p>
+</div>
+"""
+
+
+async def _inject_cf_banner(response):
+    """Read an HTML response body and inject the CF status banner just after
+    the opening <main> tag (top of the content area). Returns a new response.
+    On any failure, the caller falls back to the original response."""
+    body = b""
+    async for chunk in response.body_iterator:
+        body += chunk
+    text = body.decode("utf-8", "replace")
+    banner = _cf_status_banner()
+    new_text, n_sub = _MAIN_TAG_RE.subn(lambda m: m.group(0) + banner, text, count=1)
+    if n_sub == 0:  # <main> not found (upstream restructured) → fall back to </body>
+        if "</body>" in new_text:
+            new_text = new_text.replace("</body>", banner + "</body>", 1)
+        else:
+            new_text += banner
+    headers = {k: v for k, v in response.headers.items()
+               if k.lower() not in ("content-length", "content-type")}
+    return HTMLResponse(new_text, status_code=200, headers=headers)
 
 
 def _client_ip(request: Request) -> str:
@@ -82,7 +136,21 @@ async def _cf_access_dispatch(request: Request, call_next):
 
     # Hand identity to the upstream auth gate via its existing short-circuit.
     request.state.user = user
-    return await call_next(request)
+    response = await call_next(request)
+
+    # On the admin auth-settings page, inject a read-only banner noting that
+    # Cloudflare Access is in charge (the upstream page only knows backend=local
+    # and has no idea CF sits in front). Sidecar-only — never edits the template.
+    if (request.method == "GET"
+            and path == _AUTH_SETTINGS_PATH
+            and getattr(response, "status_code", 0) == 200
+            and response.headers.get("content-type", "").lower().startswith("text/html")
+            and auth_cf.is_configured()):
+        try:
+            return await _inject_cf_banner(response)
+        except Exception:
+            logger.exception("CF banner injection failed; serving original page")
+    return response
 
 
 # Added last → outermost → runs before upstream middleware. Safe to call at
