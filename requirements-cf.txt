@@ -1,0 +1,9 @@
+# Extra dependencies for the Cloudflare Access sidecar (app/cf_wrap.py).
+# Kept separate from requirements.txt so the upstream dependency list is never
+# touched → clean rebases. Install alongside the base requirements:
+#
+#   pip install -r requirements.txt -r requirements-cf.txt
+#
+# PyJWT[crypto] pulls in `cryptography` for RS256 signature verification of
+# Cloudflare Access JWTs (verified against the team JWKS).
+PyJWT[crypto]>=2.8,<3
