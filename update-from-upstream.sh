@@ -22,7 +22,7 @@ set -euo pipefail
 
 # ---------- 設定 (請填上原作者 repo) ----------
 UPSTREAM_REMOTE="upstream"
-UPSTREAM_URL="https://github.com/REPLACE_ME/jt-doc-tools.git"   # ← 改成原作者的 repo URL
+UPSTREAM_URL="https://github.com/jasoncheng7115/jt-doc-tools.git"   # ← 改成原作者的 repo URL
 UPSTREAM_REF="${UPSTREAM_REF:-main}"                            # 要追的上游分支或 tag
 
 # ---------- 顏色 ----------
